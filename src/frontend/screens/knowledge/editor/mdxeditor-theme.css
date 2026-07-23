@@ -1,0 +1,328 @@
+/* MDXEditor ⇄ curry-leaves theme bridge.
+ *
+ * MDXEditor ships its own CSS variables (--baseBg, --baseText, accent ramp, …).
+ * We remap them onto our `--color-*` tokens so the rich editor tracks whatever
+ * theme is active (paper / dark / sepia / …) with no per-theme forks — the tokens
+ * are already redefined per `[data-theme]` in index.css. Scoped to `.cl-mdx` so it
+ * never leaks into the rest of the app. */
+
+.cl-mdx {
+  /* base surfaces + text */
+  --baseBg: var(--color-card);
+  --baseBgSubtle: var(--color-sidebar);
+  --baseBgActive: var(--color-border-soft);
+  --baseBgHover: var(--color-border-soft);
+  --baseBorder: var(--color-border);
+  --baseBorderHover: var(--color-accent-soft);
+  --baseText: var(--color-ink);
+  --baseTextContrast: var(--color-ink);
+
+  /* neutral text ramp (labels, muted UI, toolbar glyphs) */
+  --basePageBg: var(--color-card);
+  --baseF80: var(--color-ink2);
+  --baseF70: var(--color-ink2);
+  --baseF60: var(--color-ink3);
+  --baseF50: var(--color-ink3);
+  --baseF40: var(--color-faint);
+  --baseF30: var(--color-faint);
+  --baseF20: var(--color-border);
+  --baseF10: var(--color-border-soft);
+
+  /* accent ramp → brand accent */
+  --accentBase: var(--color-accent-soft);
+  --accentBgSubtle: var(--color-accent-soft);
+  --accentBg: var(--color-accent-soft);
+  --accentBgHover: var(--color-accent-soft);
+  --accentBgActive: var(--color-accent);
+  --accentBorder: var(--color-accent-soft);
+  --accentBorderHover: var(--color-accent);
+  --accentSolid: var(--color-accent);
+  --accentSolidHover: var(--color-accent-dark);
+  --accentText: var(--color-accent-ink);
+  --accentTextContrast: var(--color-on-accent);
+
+  /* font stacks — match the app's Inter body / JetBrains mono faces */
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-card);
+}
+
+/* The rich-text surface fills the editor pane and scrolls internally. NOTE: the
+ * scroll wrapper's real (hashed) class is `_rootContentEditableWrapper_*` — MDXEditor
+ * does NOT emit a stable `mdxeditor-root-contenteditable` class, so we must match by
+ * substring. Without this constraint the wrapper grows to fit ALL content, overflows
+ * the editor area, and paints OVER the AI review card docked below it. */
+.cl-mdx .mdxeditor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+/* Two intermediate wrappers sit between `.mdxeditor` and the scroll container. The
+ * `.mdxeditor-rich-text-editor` one carries an INLINE `style="display:block"` set by
+ * MDXEditor's JS (for its diff/source toggle) — which breaks the flex height chain, so
+ * the scroll container grows to fit all content and overflows the editor area (painting
+ * over the AI review card docked below). We must beat the inline style with
+ * `!important` to make each a constrained flex column so height propagates down and the
+ * scroll container actually clips. */
+.cl-mdx .mdxeditor-diff-source-wrapper,
+.cl-mdx .mdxeditor-rich-text-editor,
+.cl-mdx .mdxeditor-source-editor {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.cl-mdx [class*="rootContentEditableWrapper"] {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Page padding + reading type belong to the MAIN writing surface (the top-level
+ * contenteditable inside the scroll wrapper) — NOT the nested contenteditables
+ * MDXEditor mounts inside each table cell, which a blanket rule would inflate by 60px
+ * of page padding. */
+/* Match the VIEW-mode Markdown renderer (Markdown.tsx, DOC_COMPONENTS) exactly so
+ * switching between View and Edit doesn't shift the type. View mode uses: 14px Inter
+ * body at leading-relaxed; serif (Fraunces) h1 23px / h2 19px (weight 500, tight
+ * tracking); sans h3 15px weight 600. The `font-size` must beat MDXEditor's default
+ * contentEditable font, so it's set on the surface AND the block elements. */
+.cl-mdx .cl-mdx-content {
+  padding: 20px 28px 40px;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.625;
+  color: var(--color-ink);
+}
+.cl-mdx .cl-mdx-content p,
+.cl-mdx .cl-mdx-content li {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.625;
+}
+.cl-mdx .cl-mdx-content p { margin: 8px 0; }
+
+.cl-mdx [class*="tableEditor"] [contenteditable] {
+  padding: 0 !important;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cl-mdx [contenteditable] { outline: none; }
+.cl-mdx [contenteditable] h1,
+.cl-mdx [contenteditable] h2 {
+  font-family: "Fraunces", ui-serif, Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.cl-mdx [contenteditable] h1 { font-size: 23px; margin: 24px 0 10px; }
+.cl-mdx [contenteditable] h2 { font-size: 19px; margin: 20px 0 8px; }
+.cl-mdx [contenteditable] h3 {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px; font-weight: 600; letter-spacing: normal;
+  color: var(--color-ink); margin: 16px 0 6px;
+}
+.cl-mdx [contenteditable] h4 {
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px; font-weight: 600; color: var(--color-ink2); margin: 12px 0 4px;
+}
+.cl-mdx [contenteditable] a {
+  color: var(--color-accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cl-mdx [contenteditable] code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--color-sidebar);
+  border: 0.5px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.cl-mdx [contenteditable] blockquote {
+  border-left: 2px solid var(--color-accent-soft);
+  padding-left: 14px;
+  color: var(--color-ink2);
+  font-style: italic;
+}
+
+/* Lists — Tailwind v4 preflight resets every ul/ol to `list-style: none`, which
+ * strips the bullets/numbers MDXEditor relies on the browser default to draw. Put
+ * markers back on the editor's content lists (task-list items opt out below — they
+ * render their own checkbox). */
+.cl-mdx [contenteditable] ul {
+  list-style: disc outside;
+  padding-inline-start: 1.4em;
+  margin: 4px 0;
+}
+.cl-mdx [contenteditable] ol {
+  list-style: decimal outside;
+  padding-inline-start: 1.6em;
+  margin: 4px 0;
+}
+.cl-mdx [contenteditable] ul ul { list-style: circle outside; }
+.cl-mdx [contenteditable] ul ul ul { list-style: square outside; }
+.cl-mdx [contenteditable] li { margin: 2px 0; }
+.cl-mdx [contenteditable] li::marker { color: var(--color-ink3); }
+
+/* Task-list items (checkboxes) keep their own marker — no bullet. MDXEditor tags
+ * them with hashed `listItemChecked` / `listItemUnchecked` classes. */
+.cl-mdx [contenteditable] li[class*="listItemChecked"],
+.cl-mdx [contenteditable] li[class*="listItemUnchecked"],
+.cl-mdx [contenteditable] li[role="checkbox"] {
+  list-style: none;
+}
+
+/* ── Toolbar sizing + style ──────────────────────────────────────────────────
+ * MDXEditor's default toolbar reads large and off-brand because its controls are
+ * sized off a spacing scale + 24px icons tuned for its own look. We (1) shrink the
+ * spacing/radius tokens it derives everything from, (2) clamp the icon glyphs to
+ * 15px, and (3) flatten the chrome onto our sidebar surface + hairline. Everything
+ * here is scoped to `.cl-mdx` so it never touches MDXEditor elsewhere. */
+/* Toolbar container — our sidebar surface, a single hairline, compact. Scope the
+ * spacing/radius token overrides HERE (not on .cl-mdx) so the reading body keeps its
+ * own list/blockquote spacing untouched. */
+.cl-mdx [class*="toolbarRoot"] {
+  --spacing-0_5: 2px;
+  --spacing-1: 3px;
+  --spacing-1_5: 4px;
+  --spacing-2: 6px;
+  --spacing-2_5: 7px;
+  --spacing-3: 8px;
+  --spacing-4: 14px;
+  --radius-base: 5px;
+  --radius-medium: 6px;
+  --radius-large: 7px;
+  background: var(--color-sidebar) !important;
+  border: none !important;
+  border-bottom: 0.5px solid var(--color-border) !important;
+  border-radius: 0 !important;
+  padding: 5px 8px !important;
+  gap: 1px !important;
+  flex-wrap: wrap;
+  font-size: 12px;   /* narrows the em basis the controls inherit */
+}
+
+/* Icon glyphs — the big offender. Force to app scale in the toolbar AND in the
+ * link/edit popovers (which portal into this root via overlayContainer). The
+ * `:not([contenteditable] *)` guard leaves user-embedded content SVGs (diagrams,
+ * inline images) at their natural size. */
+.cl-mdx [class*="toolbarRoot"] svg,
+.cl-mdx [class*="linkDialog"] svg,
+.cl-mdx [class*="popoverContent"] svg,
+.cl-mdx [class*="tooltipContent"] svg,
+.cl-mdx [class*="dialogContent"] svg,
+.cl-mdx [class*="selectContainer"] svg {
+  width: 15px;
+  height: 15px;
+  color: var(--color-ink2);
+}
+
+/* Buttons + toggles — flat, small, our hover surface. */
+.cl-mdx [class*="toolbarButton"],
+.cl-mdx [class*="toolbarToggleItem"] {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 5px !important;
+  border-radius: 5px !important;
+  color: var(--color-ink2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cl-mdx [class*="toolbarButton"]:hover,
+.cl-mdx [class*="toolbarToggleItem"]:hover {
+  background: var(--color-border-soft) !important;
+}
+.cl-mdx [class*="toolbarButton"][data-state="on"],
+.cl-mdx [class*="toolbarToggleItem"][data-state="on"] {
+  background: color-mix(in oklch, var(--color-accent) 14%, transparent) !important;
+  color: var(--color-accent-ink) !important;
+}
+.cl-mdx [class*="toolbarButton"][data-state="on"] svg,
+.cl-mdx [class*="toolbarToggleItem"][data-state="on"] svg {
+  color: var(--color-accent) !important;
+}
+
+/* Block-type / language selects — match our select chrome. */
+.cl-mdx [class*="toolbarButtonSelectTrigger"],
+.cl-mdx [class*="selectTrigger"] {
+  height: 26px !important;
+  padding: 0 8px !important;
+  border-radius: 5px !important;
+  border: 0.5px solid var(--color-border) !important;
+  background: var(--color-card) !important;
+  color: var(--color-ink2) !important;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-size: 11.5px !important;
+}
+
+/* Separators — thin, short, our hairline. */
+.cl-mdx [class*="toolbarRoot"] div[role="separator"] {
+  margin: 4px 4px !important;
+  height: 16px !important;
+  border-left: 0.5px solid var(--color-border) !important;
+  border-right: none !important;
+}
+
+/* Toolbar must WRAP, never horizontally scroll — MDXEditor's default is
+ * `overflow-x: auto`, which hides buttons behind a cramped scroll when the pane is
+ * narrow (e.g. the properties rail open). Force wrapping so every control stays
+ * reachable. */
+.cl-mdx [class*="toolbarRoot"] {
+  overflow-x: visible !important;
+  flex-wrap: wrap !important;
+  width: auto !important;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────────────
+ * MDXEditor's table editor renders huge, bloated rows (default cell padding off its
+ * spacing scale + tool-cell chrome). Reduce to a compact document table that matches
+ * the view-mode Markdown table. */
+.cl-mdx [class*="tableEditor"] {
+  width: auto;
+  min-width: 60%;
+  max-width: 100%;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.cl-mdx [class*="tableEditor"] > tbody > tr > td:not([class*="toolCell"]),
+.cl-mdx [class*="tableEditor"] > tbody > tr > th:not([class*="toolCell"]):not([data-tool-cell='true']) {
+  border: 0.5px solid var(--color-border) !important;
+  padding: 5px 10px !important;
+  vertical-align: top;
+  line-height: 1.5;
+}
+.cl-mdx [class*="tableEditor"] > tbody > tr:first-child > td:not([class*="toolCell"]),
+.cl-mdx [class*="tableEditor"] > tbody > tr:first-child > th:not([class*="toolCell"]) {
+  background: var(--color-sidebar);
+  font-weight: 600;
+}
+.cl-mdx [class*="tableEditor"] p { margin: 0 !important; font-size: 13px; }
+
+/* Tool-cell affordances (add row/col, row/col handles) — keep small and quiet so
+ * they don't inflate the table or shout. */
+.cl-mdx [class*="tableEditor"] [class*="toolCell"],
+.cl-mdx [class*="tableEditor"] [data-tool-cell='true'] {
+  padding: 0 !important;
+}
+.cl-mdx [class*="tableEditor"] [class*="EditorTrigger"],
+.cl-mdx [class*="tableEditor"] [class*="addRowButton"],
+.cl-mdx [class*="tableEditor"] [class*="addColumnButton"],
+.cl-mdx [class*="tableEditor"] [class*="iconButton"] {
+  color: var(--color-ink3);
+}
+.cl-mdx [class*="tableEditor"] [class*="iconButton"] svg,
+.cl-mdx [class*="tableEditor"] [class*="EditorTrigger"] svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Popovers (link dialog, block-type menu) sit above everything else in the pane. */
+.cl-mdx [data-radix-popper-content-wrapper] {
+  z-index: 40;
+}
