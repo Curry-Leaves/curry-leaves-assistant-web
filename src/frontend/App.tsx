@@ -28,11 +28,12 @@ import type { Agent, AppEvent, Recording, Todo } from './types';
 export type Screen = 'capture' | 'ask' | 'recordings' | 'tasks' | 'knowledge' | 'agents' | 'board' | 'artifacts' | 'trace' | 'usage' | 'settings';
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>('capture');
-  const [openTabs, setOpenTabs] = useState<Screen[]>(['capture']);
+  const [screen, setScreen] = useState<Screen>('board');
+  const [openTabs, setOpenTabs] = useState<Screen[]>(['board']);
   const [focusRecording, setFocusRecording] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [focusNote, setFocusNote] = useState<string | null>(null);
+  const [focusSession, setFocusSession] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -145,6 +146,7 @@ export function App() {
     suspended: false,
     prefs: wakeCfg ? {
       speak: wakeCfg.speak && wakeCfg.ttsAvailable,
+      continuous: wakeCfg.continuous,
       autoDismiss: wakeCfg.autoDismiss,
       dismissAfterMs: wakeCfg.dismissAfterMs,
       voice: wakeCfg.voice,
@@ -204,14 +206,14 @@ export function App() {
     setScreen(s);
     setOpenTabs((t) => (t.includes(s) ? t : [...t, s]));
   }, []);
-  // Capture is the permanent home tab — always open, never closable (also
-  // enforced in the UI by TopTabs hiding its close button, see SCREEN_LABELS).
+  // The Dashboard (inbox) is the permanent home tab — always open, never closable (also
+  // enforced in the UI by TopTabs hiding its close button, see PERMANENT_TABS).
   const closeTab = useCallback((s: Screen) => {
-    if (s === 'capture') return;
+    if (s === 'board') return;
     setOpenTabs((prev) => {
       const idx = prev.indexOf(s);
       const next = prev.filter((x) => x !== s);
-      if (next.length === 0) { setScreen('capture'); return ['capture']; }
+      if (next.length === 0) { setScreen('board'); return ['board']; }
       setScreen((cur) => (cur === s ? next[Math.min(idx, next.length - 1)] : cur));
       return next;
     });
@@ -234,6 +236,11 @@ export function App() {
   // Deep-link from a chat answer's cited source → open that note in the Knowledge Hub.
   const openKnowledgeNote = useCallback((path: string) => {
     setFocusNote(path); openScreen('knowledge');
+  }, [openScreen]);
+
+  // Deep-link from a reviewed todo → open its assistant conversation (run_<jobId>) in Ask AI.
+  const openConversation = useCallback((sessionId: string) => {
+    setFocusSession(sessionId); openScreen('ask');
   }, [openScreen]);
 
   // ⌘R global toggle from the Electron shell → jump to Capture.
@@ -306,7 +313,7 @@ export function App() {
         onCancel={assistant.cancel}
         onNavigate={openKnowledgeNote}
       />
-      {newTaskOpen && <NewTaskModal onClose={() => setNewTaskOpen(false)} onPosted={() => openScreen('agents')} />}
+      {newTaskOpen && <NewTaskModal onClose={() => setNewTaskOpen(false)} onPosted={() => openScreen('board')} />}
       <TopBar tabs={openTabs} onSelectTab={openScreen} onCloseTab={closeTab} />
       {/* Sunken strip holds the icon rail; the content is an inset panel with a
           rounded top-left corner + hairline top/left border (curry-leaves's layout). */}
@@ -330,12 +337,12 @@ export function App() {
             {openTabs.map((s) => (
               <div key={s} className={s === screen ? 'flex-1 flex min-h-0 min-w-0' : 'hidden'}>
                 {s === 'capture' && <CaptureScreen active={s === screen} onSaved={refreshRecordings} onNavigate={openScreen} onOpenSettings={openSettingsSection} />}
-                {s === 'ask' && <AskAiScreen agents={visibleAgents} active={s === screen} onOpenNote={openKnowledgeNote} />}
+                {s === 'ask' && <AskAiScreen agents={visibleAgents} active={s === screen} onOpenNote={openKnowledgeNote} focusSessionId={focusSession} onFocusHandled={() => setFocusSession(null)} />}
                 {s === 'recordings' && <RecordingsScreen recordings={recordings} todos={todos} refresh={refreshRecordings} focusId={focusRecording} onFocusHandled={() => setFocusRecording(null)} />}
-                {s === 'tasks' && <TasksScreen recordings={recordings} onOpenRecording={openRecording} />}
+                {s === 'tasks' && <TasksScreen recordings={recordings} onOpenRecording={openRecording} onOpenConversation={openConversation} />}
                 {s === 'knowledge' && <KnowledgeScreen focusNote={focusNote} onFocusHandled={() => setFocusNote(null)} />}
                 {s === 'agents' && <AgentsScreen agents={agents} activity={activity} running={running} onRefreshActivity={refreshActivity} onRefreshAgents={refreshAgents} />}
-                {s === 'board' && <DashboardScreen agents={visibleAgents} />}
+                {s === 'board' && <DashboardScreen agents={visibleAgents} onOpenAssistants={() => openScreen('agents')} />}
                 {s === 'artifacts' && <ArtifactsScreen />}
                 {s === 'trace' && <TraceScreen />}
                 {s === 'usage' && <UsageScreen />}
@@ -360,8 +367,8 @@ export function App() {
 
 // ─── New-task modal (⌘K → "New task") ─────────────────────────────────────────
 // The describe front door, reachable from anywhere. The user says what they need; it becomes a
-// user-posted pool item and the Lead routes it. Mirrors the Assistants-page describe box so the
-// two entry points behave identically.
+// user-posted pool item and the Lead routes it. Mirrors the Dashboard inbox's quick-ask box so
+// the entry points behave identically; posting lands you on the inbox to watch it move.
 function NewTaskModal({ onClose, onPosted }: { onClose: () => void; onPosted: () => void }) {
   const [need, setNeed] = useState('');
   const [busy, setBusy] = useState(false);

@@ -30,6 +30,15 @@ type Row =
   | { kind: 'command'; cmd: Command }
   | { kind: 'result'; res: SearchResult };
 
+// The mounted palette registers its opener here so any caller (e.g. the header search
+// box) can open it directly, without a ref or a fragile synthetic event.
+let _openPalette: (() => void) | null = null;
+
+/** Open the ⌘K command palette from anywhere. Always opens; never toggles closed. */
+export function openCommandPalette(): void {
+  _openPalette?.();
+}
+
 /** The ⌘K global search + command palette. Owns its own open/close (⌘K toggles, Esc
  *  closes) and search fetching; the host supplies the command list and per-type open
  *  handlers. Mount once, near the app root. */
@@ -59,6 +68,13 @@ export function CommandPalette({ commands, onOpenResult }: {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
+
+  // Register the module-level opener (openCommandPalette) for the lifetime of the mount,
+  // so callers like the header search box open the palette imperatively.
+  useEffect(() => {
+    _openPalette = () => setOpen(true);
+    return () => { if (_openPalette) _openPalette = null; };
+  }, []);
 
   // Reset + focus on open.
   useEffect(() => {

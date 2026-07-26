@@ -29,8 +29,39 @@ import { TtsPlayer } from './audioPlayback';
 
 // Matches useVoiceChat's tuning — same mic, same VAD problem. Overridable in Settings.
 const SILENCE_MS = 1200;
-const SPEECH_RMS = 0.015;
+const SPEECH_RMS = 0.02;
 const MIN_UTTERANCE = 2;
+// A single loud frame is a click, a cough, a lip smack, or the tail of the assistant's own
+// audio — not speech. Require this many consecutive over-threshold frames before we believe
+// someone is actually talking, so a stray blip can't arm the capture and hand Whisper a near-
+// silent clip to hallucinate "okay" / "you" / "thanks" on. Each frame is ~256ms (4096 @ 16kHz),
+// so 2 = ~0.5s: enough to reject a click, short enough that a crisp "yes" in the confirmation
+// still arms it.
+const SPEECH_FRAMES_TO_ARM = 2;
+
+// Whisper hallucinates stock fillers on silence or noise — "you", "thank you", "thanks for
+// watching", "bye", "[BLANK_AUDIO]", "(music)". When one of these is the ENTIRE transcript it's
+// almost always a hallucination on a near-empty clip, not something the user said. Dropping them
+// is what stops the assistant reacting when nobody spoke.
+//
+// Deliberately does NOT include yes/no/ok/sure/okay: those are the real answers the yes/no
+// confirmation listens for, so they must survive. The sustained-speech gate (SPEECH_FRAMES_TO_
+// ARM) is what stops a *silent* clip producing a phantom "ok" — this list handles the noisier
+// hallucinations that a gate alone won't catch.
+const HALLUCINATION_ONLY = new RegExp(
+  '^(?:' +
+  '(?:um|uh|ah|oh|hmm|mm|mhm|you|bye|goodbye|so long|thanks?|thank you|' +
+  'thanks for watching|thank you for watching|please subscribe|subscribe|like and subscribe|' +
+  'the end|music|applause|silence|blank_?audio|\\[[^\\]]*\\]|\\([^)]*\\))' +
+  '[\\s.,!?-]*)+$', 'i',
+);
+
+/** True if `text` is nothing but Whisper filler/hallucination (no real content the user said). */
+function isHallucinationOnly(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  return HALLUCINATION_ONLY.test(t);
+}
 // Give up if the user says nothing after the wake word, rather than holding a live
 // transcription stream open forever.
 const NO_SPEECH_TIMEOUT_MS = 8000;
@@ -87,6 +118,9 @@ export type VoiceAssistant = {
 /** User-configurable behaviour (Settings → Wake word). */
 export type VoiceAssistantPrefs = {
   speak: boolean;
+  /** Reopen the mic for a follow-up after each answer (continuous conversation), ending on
+   *  silence or an explicit cancel, instead of one question per wake word. */
+  continuous: boolean;
   autoDismiss: boolean;
   dismissAfterMs: number;
   voice: string;
@@ -108,11 +142,12 @@ export function useVoiceAssistant(opts: {
   // Read through a ref: these change from Settings mid-session, and a stale closure would
   // keep speaking after the user turned speech off.
   const prefsRef = useRef<VoiceAssistantPrefs>({
-    speak: true, autoDismiss: true, dismissAfterMs: 6000, voice: '', silenceMs: SILENCE_MS,
-    workApproval: 'confirm',
+    speak: true, continuous: true, autoDismiss: true, dismissAfterMs: 6000, voice: '',
+    silenceMs: SILENCE_MS, workApproval: 'confirm',
   });
   prefsRef.current = {
     speak: opts.prefs?.speak ?? true,
+    continuous: opts.prefs?.continuous ?? true,
     autoDismiss: opts.prefs?.autoDismiss ?? true,
     dismissAfterMs: opts.prefs?.dismissAfterMs ?? 6000,
     voice: opts.prefs?.voice ?? '',
@@ -146,6 +181,11 @@ export function useVoiceAssistant(opts: {
   // "I didn't hear you" from "that wasn't a yes or a no".
   const lastHeardRef = useRef('');
   const replyBuf = useRef('');
+  // The session this whole spoken conversation shares. The first question of an exchange starts
+  // with none (a fresh session is created server-side and returned); every follow-up reuses it,
+  // so the agent sees the prior turns and "no, I meant X" lands with context. cancel() clears it
+  // — the NEXT wake word begins a clean conversation rather than inheriting stale history.
+  const sessionRef = useRef<string | null>(null);
   const agentRef = useRef(agentId);
   agentRef.current = agentId;
 
@@ -176,6 +216,7 @@ export function useVoiceAssistant(opts: {
     const a = audioRef.current; audioRef.current = null;
     a?.end().catch(() => {});
     transcriptRef.current = ''; replyBuf.current = '';
+    sessionRef.current = null;   // end of conversation → next wake word starts fresh
     finalizing.current = false;
     setHeard(''); setReply('');
     setPhaseBoth(enabled ? 'armed' : 'off');
@@ -216,11 +257,16 @@ export function useVoiceAssistant(opts: {
     return turnRef.current === myTurn;
   }, []);
 
+  // A follow-up listener installed by speakAnswer when continuous mode is on. Held in a ref to
+  // break the declaration cycle: speakAnswer needs to start a new turn, and starting a turn
+  // needs speakAnswer. Assigned once startFollowUp is defined, below.
+  const followUpRef = useRef<(() => void) | null>(null);
+
   // ─── speak the answer, then re-arm ────────────────────────────────────────────
   const speakAnswer = useCallback(async (text: string) => {
     const clean = text.trim();
     if (!clean) { cancel(); return; }
-    const { speak: doSpeak, autoDismiss, dismissAfterMs } = prefsRef.current;
+    const { speak: doSpeak, continuous, autoDismiss, dismissAfterMs } = prefsRef.current;
 
     // Claim this exchange. cancel() bumps the token, so an answer that is stopped
     // mid-sentence (the user disabled speech, or closed the panel) can tell that it is no
@@ -233,10 +279,19 @@ export function useVoiceAssistant(opts: {
     }
     if (turnRef.current !== myTurn) return;
 
-    // The answer is on screen and finished. Auto-dismiss hides it after a beat; otherwise
-    // it stays until the user closes it (and the wake word stays suppressed until then, so
-    // the panel can't be talked over while it's still being read).
+    // The answer is on screen and finished.
     setPhaseBoth('answered');
+
+    // Continuous conversation: reopen the mic for a follow-up so a back-and-forth doesn't need
+    // the wake word each turn. We only get here AFTER `say()` has drained playback, so the mic
+    // never opens mid-sentence (AEC is off on this mic — see App.tsx). A silent follow-up ends
+    // the loop via the same no-speech path as the first question, settling back to armed.
+    // Skipped when speech is off: with no spoken reply there's no natural turn-taking cue, so a
+    // silent-answer setup stays one-shot.
+    if (continuous && doSpeak) { followUpRef.current?.(); return; }
+
+    // One-shot: auto-dismiss hides the panel after a beat; otherwise it stays until the user
+    // closes it (and the wake word stays suppressed until then, so it can't be talked over).
     if (autoDismiss) {
       dismissTimer.current = setTimeout(() => cancel(), Math.max(0, dismissAfterMs));
     }
@@ -259,8 +314,15 @@ export function useVoiceAssistant(opts: {
     heardSpeech.current = false;
     finalizing.current = false;
     let settled = false;
+    // Consecutive over-threshold frames so far. One blip isn't speech; SPEECH_FRAMES_TO_ARM in
+    // a row is. Reset the instant a frame drops back under, so only genuinely sustained sound
+    // arms the capture.
+    let speechRun = 0;
 
-    const finish = async () => {
+    // `spoke` = did real, sustained speech actually occur? When false we DON'T transcribe at
+    // all — feeding Whisper a silent/near-silent clip is exactly what produces the phantom
+    // "okay"/"you"/"thanks" this guards against. So a no-speech finish resolves '' directly.
+    const finish = async (spoke: boolean) => {
       if (settled || finalizing.current) return;
       finalizing.current = true;
       settled = true;
@@ -268,6 +330,14 @@ export function useVoiceAssistant(opts: {
       tapRef.current?.close(); tapRef.current = null;
       if (streamRef.current) { releaseMic(streamRef.current); streamRef.current = null; }
       const a = audioRef.current; audioRef.current = null;
+      // No real speech → discard the audio without transcribing; nothing was said.
+      if (!spoke) {
+        try { await a?.end(); } catch { /* just draining */ }
+        finalizing.current = false;
+        transcriptRef.current = '';
+        resolve('');
+        return;
+      }
       let text = transcriptRef.current;
       try {
         // end() flushes the tail server-side and resolves with the final transcript, which is
@@ -277,8 +347,12 @@ export function useVoiceAssistant(opts: {
       } catch { /* keep the partial */ }
       finalizing.current = false;
       transcriptRef.current = '';
+      text = text.trim();
+      // Sustained speech but the transcript is nothing but a Whisper filler → treat as nothing
+      // said. Catches hallucinations the no-speech gate can't (real noise that isn't words).
+      if (isHallucinationOnly(text)) text = '';
       // Superseded while we were flushing (user closed the panel, wake word disabled).
-      resolve(turnRef.current === myTurn ? text.trim() : '');
+      resolve(turnRef.current === myTurn ? text : '');
     };
 
     (async () => {
@@ -291,17 +365,23 @@ export function useVoiceAssistant(opts: {
         audioRef.current = audio;
         tapRef.current = await createPcmTap(stream, (buf) => {
           audio.send(buf);
-          // VAD: speech, then a quiet gap, ends the utterance.
+          // VAD: SUSTAINED speech, then a quiet gap, ends the utterance. A single loud frame
+          // (click, cough, echo tail) no longer counts — only SPEECH_FRAMES_TO_ARM in a row.
           const level = rms(new Float32Array(buf));
           if (level > SPEECH_RMS) {
-            heardSpeech.current = true;
-            if (noSpeechTimer.current) { clearTimeout(noSpeechTimer.current); noSpeechTimer.current = null; }
-            if (silenceTimer.current) clearTimeout(silenceTimer.current);
-            silenceTimer.current = setTimeout(() => { finish(); }, silenceMs);
+            speechRun++;
+            if (speechRun >= SPEECH_FRAMES_TO_ARM) {
+              heardSpeech.current = true;
+              if (noSpeechTimer.current) { clearTimeout(noSpeechTimer.current); noSpeechTimer.current = null; }
+              if (silenceTimer.current) clearTimeout(silenceTimer.current);
+              silenceTimer.current = setTimeout(() => { finish(true); }, silenceMs);
+            }
+          } else {
+            speechRun = 0;   // gap breaks the run; a lone blip never arms
           }
         });
-        // Nothing said at all → give up rather than hold the stream open.
-        noSpeechTimer.current = setTimeout(() => { if (!heardSpeech.current) finish(); }, noSpeechMs);
+        // Nothing said at all → give up rather than hold the stream open (and DON'T transcribe).
+        noSpeechTimer.current = setTimeout(() => { if (!heardSpeech.current) finish(false); }, noSpeechMs);
       } catch {
         settled = true;
         resolve('');
@@ -358,10 +438,16 @@ export function useVoiceAssistant(opts: {
       // the user has opted out of confirmations — otherwise the one gate that matters (a
       // handoff to a background agent) is confirmed out loud below.
       // surface:'voice' keeps the session out of chat history and the Memory Keeper's sweep.
+      // sessionId threads the conversation: the first turn passes null (a fresh session is
+      // created and returned), every follow-up reuses it, so the agent has the prior turns and
+      // a correction like "no, I meant the other one" is understood. cancel() clears it at the
+      // end of the exchange, so the next wake word opens a clean conversation.
       const auto = prefsRef.current.workApproval === 'auto';
       const start = await api.startChat({
         agentId: agent, message: question, autonomous: auto, surface: 'voice',
+        sessionId: sessionRef.current,
       });
+      sessionRef.current = start.sessionId ?? sessionRef.current;
       let settled = false;
       const finish = () => {
         if (settled) return;
@@ -416,6 +502,33 @@ export function useVoiceAssistant(opts: {
     if (q.length < MIN_UTTERANCE) { cancel(); return; }
     ask(q);
   }, [ask, cancel, captureUtterance, setPhaseBoth]);
+
+  /**
+   * Continuous mode: after an answer, reopen the mic for a follow-up WITHOUT the wake word.
+   * Speech → ask it (which loops back here after the next answer). Silence → the conversation
+   * is over, so settle on the last answer and let auto-dismiss / manual close take it from
+   * there. That silence-ends-it rule is what keeps the mic from staying live forever.
+   */
+  const startFollowUp = useCallback(async () => {
+    if (phaseRef.current !== 'answered') return;   // superseded (cancel, disable, close)
+    setPhaseBoth('listening');
+    setHeard(''); setReply('');
+    const myTurn = ++turnRef.current;
+    const q = await captureUtterance({
+      silenceMs: prefsRef.current.silenceMs, noSpeechMs: NO_SPEECH_TIMEOUT_MS,
+    });
+    if (turnRef.current !== myTurn) return;   // cancelled while listening
+    if (q.length < MIN_UTTERANCE) {
+      // No follow-up — end the conversation on the answer that's already up.
+      setPhaseBoth('answered');
+      const { autoDismiss, dismissAfterMs } = prefsRef.current;
+      if (autoDismiss) dismissTimer.current = setTimeout(() => cancel(), Math.max(0, dismissAfterMs));
+      return;
+    }
+    ask(q);
+  }, [ask, cancel, captureUtterance, setPhaseBoth]);
+
+  followUpRef.current = startFollowUp;
 
   // Reflect enabled/suspended into the resting phase.
   useEffect(() => {

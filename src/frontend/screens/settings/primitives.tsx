@@ -88,13 +88,14 @@ export function SSelect({ value, onChange, title, options, minWidth = 180 }: {
   );
 }
 
-export function SToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+export function SToggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       title={value ? 'Enabled' : 'Disabled'}
+      disabled={disabled}
       onClick={() => onChange(!value)}
-      className={`relative w-[38px] h-[22px] rounded-full transition-colors flex-none ${value ? 'bg-accent' : 'bg-border'}`}
+      className={`relative w-[38px] h-[22px] rounded-full transition-colors flex-none disabled:opacity-50 disabled:cursor-not-allowed ${value ? 'bg-accent' : 'bg-border'}`}
     >
       <span className={`absolute top-0.5 w-[18px] h-[18px] rounded-full bg-white shadow transition-all ${value ? 'left-[18px]' : 'left-0.5'}`} />
     </button>

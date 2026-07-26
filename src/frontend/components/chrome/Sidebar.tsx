@@ -11,8 +11,8 @@ type NavItem = { id: Screen; label: string; icon: string };
 // Skills live in its rail; facts/notes/events live in its Memory tab.
 const NAV_GROUPS: NavItem[][] = [
   [
-    { id: 'capture', label: 'Capture', icon: 'mic' },
     { id: 'board', label: 'Dashboard', icon: 'grid' },
+    { id: 'capture', label: 'Capture', icon: 'mic' },
     { id: 'recordings', label: 'Recordings', icon: 'history' },
   ],
   [
@@ -151,7 +151,7 @@ export function Sidebar({
   onTalk?: () => void;
 }) {
   return (
-    <aside className="app-sidebar w-12 flex-none bg-sidebar flex flex-col items-center py-3 gap-1">
+    <aside className="app-sidebar w-12 flex-none min-h-0 overflow-y-auto rail-scroll bg-sidebar flex flex-col items-center py-3 gap-1">
       {NAV_GROUPS.map((group, gi) => (
         <div key={gi} className="flex flex-col items-center gap-1">
           {gi > 0 && <div className="w-5 h-px bg-sidebar-border my-1" />}

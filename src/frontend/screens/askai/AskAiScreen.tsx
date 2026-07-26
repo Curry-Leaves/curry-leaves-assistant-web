@@ -16,10 +16,12 @@ import { EmptyState } from './EmptyState';
 import { PendingCard } from './PendingCard';
 import { TaskPanel } from './TaskPanel';
 import { SLASH_CMDS, SlashMenu, type SlashCmd } from './SlashMenu';
+import { SaveSkillModal } from './SaveSkillModal';
+import type { SkillVerdict } from '../../api/skills';
 import { MentionMenu, REF_KINDS, type ChatReference, type MentionRow, type RefKind } from './MentionMenu';
 
 // ─── screen ───────────────────────────────────────────────────────────────────
-export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive = true, onOpenNote }: { agents: Agent[]; active?: boolean; onOpenNote?: (path: string) => void }) {
+export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive = true, onOpenNote, focusSessionId, onFocusHandled }: { agents: Agent[]; active?: boolean; onOpenNote?: (path: string) => void; focusSessionId?: string | null; onFocusHandled?: () => void }) {
   const chatAgents = useMemo(() => agents.filter((a) => a.surfaces.includes('chat')), [agents]);
   const pool = chatAgents.length ? chatAgents : agents;
 
@@ -65,6 +67,15 @@ export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive
   const [queueMode, setQueueMode] = useState<'steer' | 'follow_up'>('steer');
   const queueSeq = useRef(0);
   const [compacting, setCompacting] = useState(false);
+  // "Conversation → skill", human in the loop: the button ANALYZES (savingSkill spins), the
+  // verdict opens a review modal (skillDraft) — new skill, improvement to an existing learned
+  // one, or a push-back when nothing is worth keeping — and only a confirm persists it
+  // (applyingSkill). The toast reports the final outcome.
+  const [savingSkill, setSavingSkill] = useState(false);
+  const [skillDraft, setSkillDraft] = useState<SkillVerdict | null>(null);
+  const [applyingSkill, setApplyingSkill] = useState(false);
+  const [skillError, setSkillError] = useState<string | null>(null);
+  const [skillToast, setSkillToast] = useState<{ ok: boolean; name?: string; updated?: boolean; error?: string } | null>(null);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
@@ -298,6 +309,21 @@ export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive
     if (entry && entry.runId === runId) entry.detach = detach;
     bumpRuns();
   };
+
+  // Deep-link from a reviewed todo → open that assistant conversation (run_<jobId>). We may not
+  // have its meta in `sessions` (background-run sessions aren't chat sessions), so fall back to a
+  // minimal meta — openSession only needs the id to fetch the transcript and adopt any live run.
+  useEffect(() => {
+    if (!focusSessionId) return;
+    const meta = sessions.find((s) => s.id === focusSessionId)
+      ?? { id: focusSessionId, title: '', agentId: null, model: '', messageCount: 0, updatedAt: 0 };
+    openSession(meta);
+    setShowHistory(false);
+    onFocusHandled?.();
+    // Intentionally keyed only on focusSessionId: re-running when `sessions` loads would reopen
+    // the same conversation and stomp the user's scroll/typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSessionId]);
 
   // Branch a new session off the current one, up through the given user turn (0-indexed),
   // then switch to it — mirrors openSession but the id comes back from the fork call
@@ -686,6 +712,40 @@ export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive
     return saved;
   };
 
+  const saveAsSkill = async () => {
+    if (!active?.id || savingSkill) return;
+    setSavingSkill(true);
+    try {
+      setSkillDraft(await api.sessionToSkill(active.id));
+      setSkillError(null);
+    } catch (e) {
+      setSkillToast({ ok: false, error: e instanceof Error ? e.message : 'Could not analyze the conversation' });
+    }
+    setSavingSkill(false);
+  };
+
+  const applySkill = async (d: { verdict: 'create' | 'update'; name: string; description: string; body: string }) => {
+    if (!active?.id || applyingSkill) return;
+    setApplyingSkill(true);
+    try {
+      const r = await api.applySessionSkill(active.id, d);
+      setSkillDraft(null);
+      setSkillError(null);
+      setSkillToast({ ok: true, name: r.name, updated: r.updated });
+    } catch (e) {
+      // Keep the modal open so the draft isn't lost — the error shows inside it.
+      setSkillError(e instanceof Error ? e.message : 'Could not save the skill');
+    }
+    setApplyingSkill(false);
+  };
+
+  // Skill toast auto-dismisses; errors stay a bit longer so they can be read.
+  useEffect(() => {
+    if (!skillToast) return;
+    const t = setTimeout(() => setSkillToast(null), skillToast.ok ? 8000 : 12000);
+    return () => clearTimeout(t);
+  }, [skillToast]);
+
   const activeTitle = sessions.find((s) => s.id === active?.id)?.title;
 
   return (
@@ -734,12 +794,52 @@ export const AskAiScreen = memo(function AskAiScreen({ agents, active: tabActive
             </button>
           )}
         </div>
+        {active?.id && active.messages.length > 0 && (
+          <button type="button" onClick={saveAsSkill} disabled={savingSkill || streaming}
+            title="Review this conversation as a reusable skill — you'll see what would be saved (or improved) before anything is"
+            className={`inline-flex items-center gap-1.5 h-8 pl-2 pr-2.5 rounded-[8px] text-[12.5px] border border-border text-ink2 hover:bg-border-soft ${savingSkill || streaming ? 'opacity-50 cursor-default' : ''}`}>
+            <span className={savingSkill ? 'animate-spin flex' : 'flex'}>
+              <Icon name={savingSkill ? 'refresh' : 'sparkle'} size={13} />
+            </span>
+            <span>{savingSkill ? 'Reviewing…' : 'Save as skill'}</span>
+          </button>
+        )}
         <button type="button" onClick={newChat} title="New chat"
           className="inline-flex items-center gap-1.5 h-8 pl-2 pr-2.5 rounded-[8px] text-[12.5px] text-white bg-accent hover:opacity-90">
           <Icon name="plus" size={13} />
           <span>New chat</span>
         </button>
       </div>
+
+      {/* conversation → skill: review dialog + outcome toast */}
+      {skillDraft && (
+        <SaveSkillModal draft={skillDraft} applying={applyingSkill} error={skillError}
+          onCancel={() => { setSkillDraft(null); setSkillError(null); }} onApply={applySkill} />
+      )}
+      {skillToast && (
+        <div className="absolute bottom-24 right-6 z-50 max-w-[340px] rounded-[12px] border border-border bg-card shadow-pop px-3.5 py-3">
+          <div className="flex items-start gap-2.5">
+            <Icon name={skillToast.ok ? 'sparkle' : 'warning'} size={15}
+              color={skillToast.ok ? 'var(--color-accent)' : 'var(--color-warn, #d97706)'} />
+            <div className="flex-1 min-w-0">
+              {skillToast.ok ? (
+                <>
+                  <div className="text-[12.5px] font-500 text-ink">Skill “{skillToast.name}” {skillToast.updated ? 'improved' : 'created'}</div>
+                  <div className="text-[11px] text-faint mt-1">Manage it in Knowledge → Skills.</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[12.5px] font-500 text-ink">Couldn’t save the skill</div>
+                  <div className="text-[11.5px] text-ink3 mt-0.5 break-words">{skillToast.error}</div>
+                </>
+              )}
+            </div>
+            <button type="button" onClick={() => setSkillToast(null)} className="text-ink3 hover:text-ink flex mt-0.5">
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* thread */}
       <div className="relative flex-1 overflow-y-auto px-6 py-6 min-h-0">

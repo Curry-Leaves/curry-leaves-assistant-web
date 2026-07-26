@@ -45,7 +45,7 @@ export function LoginScreen({ onAuthed }: { onAuthed: () => void }) {
 
       {/* Right — keypad pane, on a faint dotted texture + soft top-down vignette
           so it doesn't read as bare background next to the branding pane. */}
-      <div className="relative flex flex-col items-center justify-center px-10 overflow-hidden">
+      <div className="page-leaf-corner relative flex flex-col items-center justify-center px-10 overflow-hidden">
         <div className="lp-dots pointer-events-none absolute inset-0 opacity-60" />
         <div className="pointer-events-none absolute inset-0"
              style={{ background: 'radial-gradient(120% 70% at 50% 0%, color-mix(in oklch, var(--color-accent) 6%, transparent) 0%, transparent 60%)' }} />

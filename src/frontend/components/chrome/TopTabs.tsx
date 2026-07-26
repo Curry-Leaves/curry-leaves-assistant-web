@@ -13,9 +13,9 @@ const SCREEN_ICONS: Record<Screen, string> = {
 
 // No `active` prop: the active tab's `.is-active` class is toggled imperatively (see
 // App), so flipping tabs never re-renders these components — only adding/removing does.
-// Capture is the permanent home tab: no close button, ever (App.closeTab also
-// no-ops for it as a second line of defense).
-const PERMANENT_TABS = new Set<Screen>(['capture']);
+// The Dashboard (inbox) is the permanent home tab: no close button, ever (App.closeTab
+// also no-ops for it as a second line of defense).
+const PERMANENT_TABS = new Set<Screen>(['board']);
 
 const Tab = memo(function Tab({ screen, label, onSelect, onClose }: {
   screen: Screen; label: string; onSelect: (s: Screen) => void; onClose: (s: Screen) => void;

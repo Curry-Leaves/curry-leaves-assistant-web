@@ -7,7 +7,7 @@ import { cronDaily } from '../../types/schedule';
 
 const FORMATS: { id: TileOutputFormat; label: string }[] = [
   { id: 'summary', label: 'Summary' },
-  { id: 'list', label: 'List' },
+  { id: 'list', label: 'Assistants' },
   { id: 'metric', label: 'Metric' },
   { id: 'table', label: 'Table' },
   { id: 'markdown', label: 'Markdown' },

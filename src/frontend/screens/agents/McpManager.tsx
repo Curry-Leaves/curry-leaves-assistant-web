@@ -211,7 +211,9 @@ function ServerForm({ draft, onSaved, onCancel }: {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-7 py-6 flex flex-col gap-4 max-w-[640px]">
+      <div className="flex-1 flex min-h-0">
+      {/* left: connection form */}
+      <div className={`overflow-y-auto px-7 py-6 flex flex-col gap-4 ${discovered ? 'w-[560px] flex-none border-r border-border' : 'flex-1 max-w-[640px]'}`}>
         <label className="flex flex-col gap-1">
           <span className="text-[12px] text-ink2">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. github" disabled={!!draft.name}
@@ -278,16 +280,40 @@ function ServerForm({ draft, onSaved, onCancel }: {
           </button>
           {testError && <div className="mt-2 text-[12px] text-rec">{testError}</div>}
         </div>
+      </div>
 
-        {discovered && (
-          <div>
-            <div className="text-[12.5px] font-550 text-ink mb-1">
-              {discovered.length} tool{discovered.length === 1 ? '' : 's'} found — pick which to expose
+      {/* right: discovered tools — fills the available space once tested */}
+      {discovered && (
+        <div className="flex-1 min-w-0 flex flex-col min-h-0">
+          <div className="flex-none flex items-center gap-3 px-7 pt-6 pb-3 border-b border-border">
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] font-550 text-ink">
+                {discovered.length} tool{discovered.length === 1 ? '' : 's'} found — pick which to expose
+              </div>
+              {discovered.length > 0 && (
+                <div className="text-[11px] text-ink3 mt-0.5">
+                  {picked.size} of {discovered.length} selected
+                </div>
+              )}
             </div>
+            {discovered.length > 0 && (
+              <div className="flex-none flex items-center gap-1.5">
+                <button type="button" onClick={() => setPicked(new Set(discovered.map((t) => t.name)))}
+                  className="h-[26px] px-2.5 rounded-[6px] border border-border text-ink2 text-[11.5px] hover:border-ink3">All</button>
+                <button type="button" onClick={() => setPicked(new Set())}
+                  className="h-[26px] px-2.5 rounded-[6px] border border-border text-ink2 text-[11.5px] hover:border-ink3">None</button>
+              </div>
+            )}
+            <button type="button" onClick={save} disabled={saving}
+              className="flex-none h-[32px] px-3.5 rounded-[6px] bg-accent text-white text-[12.5px] font-550 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <Icon name="check" size={13} /> {saving ? 'Saving…' : `Save (${picked.size})`}
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-7 py-4">
             {discovered.length === 0 ? (
               <div className="text-[12px] text-ink3">This server reports no tools.</div>
             ) : (
-              <div className="flex flex-col gap-1.5 mt-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5">
                 {discovered.map((t) => (
                   <label key={t.name} className="flex items-start gap-2 px-2.5 py-1.5 rounded-[6px] border border-border bg-card text-[12.5px] cursor-pointer">
                     <input type="checkbox" checked={picked.has(t.name)} onChange={() => togglePick(t.name)} className="mt-0.5" />
@@ -299,12 +325,9 @@ function ServerForm({ draft, onSaved, onCancel }: {
                 ))}
               </div>
             )}
-            <button type="button" onClick={save} disabled={saving}
-              className="mt-3 h-[32px] px-3.5 rounded-[6px] bg-accent text-white text-[12.5px] font-550 inline-flex items-center gap-1.5 disabled:opacity-50">
-              <Icon name="check" size={13} /> {saving ? 'Saving…' : `Save (${picked.size} tool${picked.size === 1 ? '' : 's'})`}
-            </button>
           </div>
-        )}
+        </div>
+      )}
       </div>
     </div>
   );

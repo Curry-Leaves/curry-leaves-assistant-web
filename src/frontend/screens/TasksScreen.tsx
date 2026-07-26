@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/chrome/Icon';
 import { api } from '../api/client';
 import { useEvents } from '../hooks/useEvents';
+import { Bubble } from './askai/Bubble';
+import type { ChatMsg } from './askai/model';
 import type { Todo, Reminder, Recording } from '../types';
 
 type Source = { type: string; id: string; label?: string | null } | null;
@@ -74,10 +76,89 @@ function ParentLink({ source, recordings, onOpen }: {
   );
 }
 
+// ─── proactive-assistant status badge ─────────────────────────────────────────
+// When the Todo Triage agent hands an actionable todo to the team, the todo carries an
+// assistantStatus. 'working' → a run is in flight (pulsing accent). 'review' → the team
+// finished; clicking opens the conversation, and the result summary is the tooltip.
+const ASSISTANT_BADGE = {
+  working: { label: 'Working', dot: 'an-pulse bg-accent', text: 'text-accent-dark', border: 'border-accent-soft bg-accent-soft/30' },
+  review: { label: 'Needs review', dot: 'bg-blue', text: 'text-blue', border: 'border-blue/40 bg-blue/10 hover:bg-blue/20' },
+} as const;
+
+function AssistantBadge({ todo, expanded, onToggle }: { todo: Todo; expanded: boolean; onToggle: () => void }) {
+  const status = todo.assistantStatus;
+  if (status !== 'working' && status !== 'review') return null;
+  const s = ASSISTANT_BADGE[status];
+  const canExpand = status === 'review' && !!todo.assistantSessionId;
+  const title = canExpand
+    ? (expanded ? 'Hide the conversation' : 'Show the conversation below')
+    : status === 'working' ? 'An assistant is working on this…' : 'Ready for your review';
+  return (
+    <button type="button" disabled={!canExpand} title={title} onClick={() => canExpand && onToggle()}
+      className={`flex-none flex items-center gap-1.5 text-[10.5px] rounded px-1.5 py-0.5 border ${s.text} ${s.border} ${
+        canExpand ? 'cursor-pointer' : 'cursor-default'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+      <span>{s.label}</span>
+      {canExpand && (
+        <span className={`inline-flex transition-transform ${expanded ? 'rotate-180' : ''}`}>
+          <Icon name="chevD" size={10} color="currentColor" />
+        </span>
+      )}
+    </button>
+  );
+}
+
+// The assistant's conversation, rendered inline below the todo with the SAME Bubble component
+// the Ask AI chat uses. Fetched lazily on first expand; a "Continue in Ask AI" link hands off
+// to the full chat when the user wants to reply.
+function AssistantConversation({ sessionId, result, onOpenConversation }: {
+  sessionId: string; result?: string | null; onOpenConversation?: (sessionId: string) => void;
+}) {
+  const [msgs, setMsgs] = useState<ChatMsg[] | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    api.sessionMessages(sessionId)
+      .then((m) => { if (live) setMsgs(m as ChatMsg[]); })
+      .catch(() => { if (live) setErr(true); });
+    return () => { live = false; };
+  }, [sessionId]);
+
+  return (
+    <div className="ml-7 mr-1 mb-1 rounded-[10px] border border-border bg-bg/40 px-3.5 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10.5px] uppercase tracking-wider text-ink3">Assistant conversation</span>
+        {onOpenConversation && (
+          <button type="button" onClick={() => onOpenConversation(sessionId)}
+            className="text-[11px] text-accent-dark hover:underline flex items-center gap-1">
+            Continue in Ask AI <Icon name="arrowR" size={11} color="currentColor" />
+          </button>
+        )}
+      </div>
+      {msgs === null && !err && <div className="text-[12px] text-ink3 py-2">Loading conversation…</div>}
+      {err && (
+        <div className="text-[12px] text-ink3 py-2">
+          Couldn’t load the conversation.{result ? <> Result: <span className="text-ink2">{result}</span></> : null}
+        </div>
+      )}
+      {msgs !== null && msgs.length === 0 && (
+        <div className="text-[12px] text-ink3 py-2">{result || 'No messages yet.'}</div>
+      )}
+      {msgs && msgs.length > 0 && (
+        <div className="flex flex-col gap-2.5">
+          {msgs.map((m, i) => <Bubble key={i} m={m} streaming={false} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── screen ───────────────────────────────────────────────────────────────────
-export function TasksScreen({ recordings = [], onOpenRecording }: {
+export function TasksScreen({ recordings = [], onOpenRecording, onOpenConversation }: {
   recordings?: Recording[];
   onOpenRecording?: (id: string) => void;
+  onOpenConversation?: (sessionId: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>('todos');
   const [filter, setFilter] = useState<Filter>('all');
@@ -127,7 +208,7 @@ export function TasksScreen({ recordings = [], onOpenRecording }: {
       <div className="flex-1 overflow-y-auto px-8 py-3">
         <div className="max-w-[760px] mx-auto">
           {tab === 'todos'
-            ? <TodoList todos={todos} filter={filter} reload={load} recordings={recordings} onOpenRecording={onOpenRecording} />
+            ? <TodoList todos={todos} filter={filter} reload={load} recordings={recordings} onOpenRecording={onOpenRecording} onOpenConversation={onOpenConversation} />
             : <ReminderList reminders={reminders} filter={filter} reload={load} recordings={recordings} onOpenRecording={onOpenRecording} />}
         </div>
       </div>
@@ -136,11 +217,13 @@ export function TasksScreen({ recordings = [], onOpenRecording }: {
 }
 
 // ─── todos ────────────────────────────────────────────────────────────────────
-function TodoList({ todos, filter, reload, recordings, onOpenRecording }: {
-  todos: Todo[]; filter: Filter; reload: () => void; recordings: Recording[]; onOpenRecording?: (id: string) => void;
+function TodoList({ todos, filter, reload, recordings, onOpenRecording, onOpenConversation }: {
+  todos: Todo[]; filter: Filter; reload: () => void; recordings: Recording[];
+  onOpenRecording?: (id: string) => void; onOpenConversation?: (sessionId: string) => void;
 }) {
   const [text, setText] = useState('');
   const [due, setDue] = useState('');
+  const [expanded, setExpanded] = useState<string | null>(null); // todo id whose conversation is open
 
   const add = async () => {
     const v = text.trim();
@@ -169,19 +252,27 @@ function TodoList({ todos, filter, reload, recordings, onOpenRecording }: {
       {list.length === 0 ? (
         <Empty text={filter === 'done' ? 'No completed tasks.' : 'No tasks yet — add one above.'} />
       ) : list.map((t) => (
-        <div key={t.id} className="group flex items-center gap-2.5 bg-card border border-border rounded-[10px] px-3 py-2.5">
-          <button type="button" onClick={() => api.setTodoDone(t.id, !t.done).then(reload)} title={t.done ? 'Mark active' : 'Mark done'}
-            className={`w-4.5 h-4.5 rounded-[5px] border flex-none grid place-items-center ${
-              t.done ? 'bg-accent border-accent text-on-accent' : 'border-ink3 hover:border-ink2'}`}>
-            {t.done && <Icon name="check" size={11} color="var(--color-accent-ink)" />}
-          </button>
-          <EditableText value={t.text} done={t.done} onSave={(v) => api.updateTodo(t.id, { text: v }).then(reload)} />
-          <ParentLink source={t.source} recordings={recordings} onOpen={onOpenRecording} />
-          {t.dueDate && (
-            <span className={`flex-none text-[11px] font-mono ${isOverdue(t.dueDate, t.done) ? 'text-rec' : 'text-ink3'}`}>{fmtDue(t.dueDate)}</span>
+        <div key={t.id} className="flex flex-col">
+          <div className="group flex items-center gap-2.5 bg-card border border-border rounded-[10px] px-3 py-2.5">
+            <button type="button" onClick={() => api.setTodoDone(t.id, !t.done).then(reload)} title={t.done ? 'Mark active' : 'Mark done'}
+              className={`w-4.5 h-4.5 rounded-[5px] border flex-none grid place-items-center ${
+                t.done ? 'bg-accent border-accent text-on-accent' : 'border-ink3 hover:border-ink2'}`}>
+              {t.done && <Icon name="check" size={11} color="var(--color-accent-ink)" />}
+            </button>
+            <EditableText value={t.text} done={t.done} onSave={(v) => api.updateTodo(t.id, { text: v }).then(reload)} />
+            <AssistantBadge todo={t} expanded={expanded === t.id}
+              onToggle={() => setExpanded((cur) => (cur === t.id ? null : t.id))} />
+            <ParentLink source={t.source} recordings={recordings} onOpen={onOpenRecording} />
+            {t.dueDate && (
+              <span className={`flex-none text-[11px] font-mono ${isOverdue(t.dueDate, t.done) ? 'text-rec' : 'text-ink3'}`}>{fmtDue(t.dueDate)}</span>
+            )}
+            <button type="button" onClick={() => api.deleteTodo(t.id).then(reload)} title="Delete"
+              className="flex-none p-1 rounded text-ink3 opacity-0 group-hover:opacity-100 hover:text-rec"><Icon name="trash" size={13} /></button>
+          </div>
+          {expanded === t.id && t.assistantSessionId && (
+            <AssistantConversation sessionId={t.assistantSessionId} result={t.assistantResult}
+              onOpenConversation={onOpenConversation} />
           )}
-          <button type="button" onClick={() => api.deleteTodo(t.id).then(reload)} title="Delete"
-            className="flex-none p-1 rounded text-ink3 opacity-0 group-hover:opacity-100 hover:text-rec"><Icon name="trash" size={13} /></button>
         </div>
       ))}
     </div>

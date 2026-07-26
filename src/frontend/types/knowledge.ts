@@ -94,6 +94,18 @@ export interface KnowledgeIngestStatus {
   recent: KnowledgeIngestEntry[];
 }
 
+/** Semantic-search model readiness. `ready` = the vector tier is live (all three below). */
+export interface EmbeddingsStatus {
+  /** torch + transformers import — semantic search is possible on this install. */
+  available: boolean;
+  /** The user hasn't forced keyword-only search (CURRY_LEAVES_VECTOR_SEARCH). */
+  enabled: boolean;
+  /** The ~90 MB MiniLM weights are on disk. Never fetched at boot — download is opt-in. */
+  downloaded: boolean;
+  /** available && enabled && downloaded — recall can match on meaning. */
+  ready: boolean;
+}
+
 // Procedural memory — manageable skill:// directories ("how we do things"),
 // distinct from the Knowledge Base's factual notes. Each skill is a folder
 // (SKILL.md + optional references/scripts/assets), not a single flat body.

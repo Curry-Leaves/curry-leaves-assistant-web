@@ -16,7 +16,7 @@
         try {
           var t = localStorage.getItem('curry-leaves.theme') || 'system';
           if (t === 'system') {
-            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'paper';
+            t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'sepia';
           }
           document.documentElement.dataset.theme = t;
         } catch (e) { /* ignore */ }

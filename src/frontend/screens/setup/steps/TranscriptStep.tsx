@@ -23,8 +23,6 @@ export function TranscriptStep({ usage, onNext, onSkip, onBack }: {
   const [models, setModels] = useState<WhisperModelInfo[]>([]);
   const [backend, setBackend] = useState('');
   const [downloading, setDownloading] = useState<string | null>(null);
-  // What the user explicitly tapped, so Continue knows whether to choose for them.
-  const [selected, setSelected] = useState<string | null>(null);
 
   const load = () => api.listModels()
     .then((r) => {
@@ -50,12 +48,14 @@ export function TranscriptStep({ usage, onNext, onSkip, onBack }: {
 
   const recommended = recommendedFor(usage);
   const list = useMemo(() => models.filter((m) => m.backend === backend), [models, backend]);
-  // Is transcription actually set up? (Something downloaded, or a download already running.)
-  const hasModel = !!downloading || list.some((m) => m.downloaded);
+  // Continue only advances once a model is genuinely ON DISK — a download still in flight doesn't
+  // count. No models available at all (unusual) also lets Continue through, since there's nothing
+  // to download. While a download runs, both Continue and Skip are held so the choice is settled
+  // before leaving. `pick()` starts the download on tap; Continue never triggers one itself.
+  const canContinue = !list.length || list.some((m) => m.downloaded);
 
   const pick = async (m: WhisperModelInfo) => {
     const key = `${m.backend}/${m.name}`;
-    setSelected(key);
     // Make it the active model right away — even mid-download, so the choice sticks.
     api.selectModel({ backend: m.backend, model: m.name }).then((r) => setModels(r.models)).catch(() => {});
     if (m.downloaded) return;
@@ -64,28 +64,11 @@ export function TranscriptStep({ usage, onNext, onSkip, onBack }: {
     setDownloading((d) => (d === key ? null : d));
   };
 
-  /**
-   * Continue must actually SET UP transcription, not just move on. If the user never
-   * tapped a row, start the recommended model's download here — otherwise the step reads
-   * as completed while leaving the app with no speech-to-text model at all (the Capture
-   * screen then greets them with "Transcription isn't active"). Skip remains the explicit
-   * "not now"; Continue means yes.
-   */
-  const continueWith = async () => {
-    const already = list.find((m) => `${m.backend}/${m.name}` === selected)
-      || list.find((m) => m.active && m.downloaded);
-    if (!already) {
-      const target = list.find((m) => m.name === recommended) || list.find((m) => m.downloaded) || list[0];
-      if (target) void pick(target);   // fire-and-forget: the download must not block the wizard
-    }
-    onNext();
-  };
-
   return (
     <>
       <StepHead
         title="Set up transcription"
-        hint="Recordings are transcribed on your machine — nothing is uploaded. Pick a model to download; bigger is more accurate but slower. Continue downloads the recommended one."
+        hint="Recordings are transcribed on your machine — nothing is uploaded. Pick a model to download; bigger is more accurate but slower. Skip to set this up later."
       />
       <div className="mt-6 flex flex-col gap-2 max-h-[250px] overflow-y-auto pr-1">
         {list.map((m) => {
@@ -122,14 +105,16 @@ export function TranscriptStep({ usage, onNext, onSkip, onBack }: {
       </div>
       {downloading && (
         <p className="text-[11.5px] text-ink3 mt-3">
-          Downloading in the background — you can carry on with setup.
+          Downloading… this finishes before you continue.
         </p>
       )}
       <StepNav
-        onNext={continueWith}
+        onNext={onNext}
         onSkip={onSkip}
         onBack={onBack}
-        nextLabel={hasModel ? 'Continue' : `Download ${recommended}`}
+        nextLabel="Continue"
+        disabled={!canContinue}
+        skipDisabled={!!downloading}
       />
     </>
   );

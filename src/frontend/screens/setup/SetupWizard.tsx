@@ -7,6 +7,8 @@ import { NameStep } from './steps/NameStep';
 import { UsageStep } from './steps/UsageStep';
 import { LanguageStep } from './steps/LanguageStep';
 import { TranscriptStep } from './steps/TranscriptStep';
+import { VoiceStep } from './steps/VoiceStep';
+import { KnowledgeStep } from './steps/KnowledgeStep';
 import { ProviderStep } from './steps/ProviderStep';
 import { PinStep } from './steps/PinStep';
 
@@ -24,13 +26,22 @@ import { PinStep } from './steps/PinStep';
  * exists, which is what lets these steps write real state with no token — see core/auth.py.
  */
 
-export type StepId = 'name' | 'usage' | 'language' | 'transcript' | 'provider' | 'pin';
+export type StepId = 'name' | 'usage' | 'language' | 'transcript' | 'voice' | 'knowledge' | 'provider' | 'pin';
 
-const STEPS: { id: StepId; label: string }[] = [
+/**
+ * The voice and knowledge steps are conditional: each belongs in the flow only when the user
+ * picked the matching option in the usage step, so nobody is prompted to download a model
+ * (TTS weights / the embedding model) for a feature they didn't ask for. Because `usage` isn't
+ * known until step 2, the step list is derived from it — adding or removing these steps live as
+ * the picks change, which keeps the sidebar and the next/back indices honest.
+ */
+const buildSteps = (usage: string[]): { id: StepId; label: string }[] => [
   { id: 'name', label: 'Your name' },
   { id: 'usage', label: "How you'll use it" },
   { id: 'language', label: 'Language' },
   { id: 'transcript', label: 'Transcription' },
+  ...(usage.includes('voice') ? [{ id: 'voice' as StepId, label: 'Voice' }] : []),
+  ...(usage.includes('knowledge') ? [{ id: 'knowledge' as StepId, label: 'Knowledge' }] : []),
   { id: 'provider', label: 'AI provider' },
   { id: 'pin', label: 'Create a PIN' },
 ];
@@ -42,16 +53,20 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
   // Load once so every step can prefill from whatever a previous (abandoned) run saved.
   useEffect(() => { api.getSettings().then(setSettings).catch(() => setSettings(null)); }, []);
 
-  const step = STEPS[i];
-  const next = useCallback(() => setI((n) => Math.min(n + 1, STEPS.length - 1)), []);
-  const back = useCallback(() => setI((n) => Math.max(n - 1, 0)), []);
-
   const identity = settings?.identity;
   // Seeded from the server (a previous, abandoned run) but then owned locally: `settings` is
   // fetched once on mount, so without lifting the live picks the transcription step would
   // always see the pre-wizard value and never the choice just made two steps earlier.
   const [usage, setUsage] = useState<string[]>([]);
   useEffect(() => { if (identity?.usage?.length) setUsage(identity.usage); }, [identity]);
+
+  // The step list depends on `usage` (the voice step is conditional), so it's derived rather
+  // than constant. `i` indexes into this — the length only changes at the usage step, which is
+  // before any conditional step, so the index stays valid across the transition.
+  const steps = buildSteps(usage);
+  const step = steps[i];
+  const next = useCallback(() => setI((n) => Math.min(n + 1, steps.length - 1)), [steps.length]);
+  const back = useCallback(() => setI((n) => Math.max(n - 1, 0)), []);
   // Same for the name — otherwise stepping Back to it shows an empty field despite the
   // value having been saved a moment ago.
   const [name, setName] = useState('');
@@ -61,7 +76,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
     <div className="w-full h-full overflow-hidden bg-bg text-ink grid grid-cols-[1.05fr_1fr]">
       <BrandPane compact>
         <ol className="mt-6 flex flex-col gap-2.5 text-left">
-          {STEPS.map((s, n) => {
+          {steps.map((s, n) => {
             const state = n < i ? 'done' : n === i ? 'current' : 'todo';
             return (
               <li key={s.id} className="flex items-center gap-2.5">
@@ -102,6 +117,12 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
           {step.id === 'transcript' && (
             <TranscriptStep usage={usage} onNext={next} onSkip={next} onBack={back} />
           )}
+          {step.id === 'voice' && (
+            <VoiceStep onNext={next} onSkip={next} onBack={back} />
+          )}
+          {step.id === 'knowledge' && (
+            <KnowledgeStep onNext={next} onSkip={next} onBack={back} />
+          )}
           {step.id === 'provider' && (
             <ProviderStep onNext={next} onSkip={next} onBack={back} />
           )}
@@ -128,10 +149,14 @@ export function StepHead({ title, hint }: { title: string; hint: string }) {
 /**
  * The Back / Continue / Skip row every step ends with. `onSkip` is what makes a step
  * optional — omit it (the PIN step) and there's no way past but forward.
+ *
+ * `disabled` gates Continue; `skipDisabled` gates Skip independently. The model steps use
+ * both together while a download is in flight — neither Continue nor Skip should let you leave
+ * mid-download, so the choice (wait for it, or don't) is made *before* the fetch starts.
  */
-export function StepNav({ onNext, onSkip, onBack, nextLabel = 'Continue', busy, disabled }: {
+export function StepNav({ onNext, onSkip, onBack, nextLabel = 'Continue', busy, disabled, skipDisabled }: {
   onNext?: () => void; onSkip?: () => void; onBack?: () => void;
-  nextLabel?: string; busy?: boolean; disabled?: boolean;
+  nextLabel?: string; busy?: boolean; disabled?: boolean; skipDisabled?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3 mt-7">
@@ -148,7 +173,7 @@ export function StepNav({ onNext, onSkip, onBack, nextLabel = 'Continue', busy, 
         <button
           type="button"
           onClick={onSkip}
-          disabled={busy}
+          disabled={busy || skipDisabled}
           className="h-[32px] px-2 text-[12.5px] text-ink3 hover:text-ink transition-colors disabled:opacity-50">
           Skip
         </button>

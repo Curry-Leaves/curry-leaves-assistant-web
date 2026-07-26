@@ -2,7 +2,22 @@
 import type { Agent, AgentRun } from '../types';
 import { j } from './http';
 
+/** A suspended run's unanswered question/approval, durable on the backend
+ *  (queue/<jobId>.pending.json) — answerable whenever via run.respond. */
+export interface PendingInput {
+  jobId: string;
+  requestId: string;
+  agentId?: string;
+  agentName?: string;
+  /** The pool ask this question concerns, when known — an assigned run's item, or the
+   *  item whose creation woke the Lead's triage run. Lets the desk pin the question. */
+  poolItemId?: string;
+  frame: { type: 'ask' | 'approve'; id: string; question?: string; options?: string[]; tool?: string };
+  at: string;
+}
+
 export const agentsApi = {
+  listPendingInputs: () => j<PendingInput[]>('/pending-inputs'),
   listAgents: () => j<Agent[]>('/agents'),
   agentOptions: () => j<{ tools: { name: string; description: string }[]; triggers: string[]; skills: { name: string; description: string }[] }>('/agent-options'),
   generateAgent: (description: string) =>

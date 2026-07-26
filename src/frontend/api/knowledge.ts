@@ -2,7 +2,7 @@
 import type {
   KnowledgeNote, KnowledgeNoteDetail, KnowledgeHit, KnowledgeGraph, KnowledgeHistoryEntry,
   KnowledgeProvenance, KnowledgeConflict, KnowledgeGardenerReport, KnowledgeHealthReport,
-  KnowledgeIngestResult, KnowledgeIngestStatus,
+  KnowledgeIngestResult, KnowledgeIngestStatus, EmbeddingsStatus,
 } from '../types';
 import { authHeader } from '../auth';
 import { base, j } from './http';
@@ -50,6 +50,12 @@ export const knowledgeApi = {
   deleteKnowledgeNote: (path: string) =>
     j<{ ok: boolean }>(`/knowledge/note?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
   getKnowledgeIngestStatus: () => j<KnowledgeIngestStatus>('/knowledge/ingest/status'),
+  /** Semantic-search model status. Weights are never fetched at boot — this says whether to
+   *  offer the download in setup/settings. */
+  getEmbeddingsStatus: () => j<EmbeddingsStatus>('/knowledge/embeddings'),
+  /** Download (~90 MB) + warm the embedding model on explicit request. */
+  downloadEmbeddings: () =>
+    j<EmbeddingsStatus & { ok: boolean; error?: string }>('/knowledge/embeddings/download', { method: 'POST' }),
   ingestKnowledgeText: (text: string, title?: string) =>
     j<KnowledgeIngestResult>('/knowledge/ingest', { method: 'POST', body: JSON.stringify({ text, title: title || null }) }),
   ingestKnowledgeFile: async (filename: string, data: ArrayBuffer): Promise<KnowledgeIngestResult> => {

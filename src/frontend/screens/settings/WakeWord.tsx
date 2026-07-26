@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import { SGroup, SField, SToggle, SSelect, Value } from './primitives';
+import { SHeader, SGroup, SField, SToggle, SSelect, Value } from './primitives';
 import {
-  downloadWakeWord, getWakeWord, patchWakeWord,
+  downloadTts, downloadWakeWord, getWakeWord, patchWakeWord,
   type WakeWordConfig, type WakeWordPatch,
 } from '../../api/wakeword';
 
 export function WakeWord() {
   const [cfg, setCfg] = useState<WakeWordConfig | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ttsBusy, setTtsBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { getWakeWord().then(setCfg).catch((e) => setErr(String(e))); }, []);
@@ -26,13 +27,24 @@ export function WakeWord() {
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
 
+  const downloadVoice = async () => {
+    setTtsBusy(true); setErr(null);
+    try {
+      const next = await downloadTts();
+      setCfg(next);
+      if (next.error) setErr(next.error);
+    } catch (e) { setErr(String(e)); } finally { setTtsBusy(false); }
+  };
+
   if (!cfg) return <SGroup><Value>{err ?? 'Loading…'}</Value></SGroup>;
 
   const ready = cfg.available;
 
   return (
     <>
-      <SGroup title="Wake word">
+      <SHeader title="Wake word" subtitle="Hands-free voice chat: say the wake word, ask a question, hear the answer. Everything runs on this device." />
+      <div className="overflow-y-auto">
+        <SGroup title="Wake word">
         <SField
           label="Listen for a wake word"
           hint="Say the wake word to start a hands-free voice chat. Detection runs entirely on this device — audio is never uploaded. While this is on the microphone stays open, so your system's mic indicator will stay lit."
@@ -90,22 +102,45 @@ export function WakeWord() {
       </SGroup>
 
       <SGroup title="The answer">
+        {cfg.ttsAvailable && (
+          <SField
+            label="Voice model"
+            hint="About 300 MB, downloaded once and kept on this device. Needed to read answers aloud; downloaded only when you ask — never in the background."
+          >
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={downloadVoice}
+                disabled={ttsBusy}
+                className="h-[30px] px-3 rounded-[6px] border border-border bg-bg text-ink text-[12.5px] hover:bg-border-soft disabled:opacity-50"
+              >
+                {ttsBusy ? 'Downloading…' : cfg.ttsDownloaded ? 'Re-download' : 'Download'}
+              </button>
+              <Value>{cfg.ttsDownloaded ? 'Ready' : 'Not downloaded'}</Value>
+            </div>
+          </SField>
+        )}
+
         <SField
           label="Speak the answer"
-          hint={cfg.ttsAvailable
-            ? 'Read the answer out loud. Turn this off to get a silent answer you read in the panel instead.'
-            : 'Text-to-speech is unavailable on this install, so answers are shown but not spoken.'}
+          hint={!cfg.ttsAvailable
+            ? 'Text-to-speech is unavailable on this install, so answers are shown but not spoken.'
+            : !cfg.ttsDownloaded
+            ? 'Download the voice model above to read answers out loud.'
+            : 'Read the answer out loud. Turn this off to get a silent answer you read in the panel instead.'}
         >
           <div className="flex items-center gap-3">
             <SToggle
-              value={cfg.speak && cfg.ttsAvailable}
+              value={cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded}
+              disabled={!cfg.ttsAvailable || !cfg.ttsDownloaded}
               onChange={(v) => save({ speak: v })}
             />
-            {!cfg.ttsAvailable && <Value>Unavailable</Value>}
+            {!cfg.ttsAvailable ? <Value>Unavailable</Value>
+              : !cfg.ttsDownloaded ? <Value>Download the voice model first</Value> : null}
           </div>
         </SField>
 
-        {cfg.speak && cfg.ttsAvailable && cfg.voices.length > 0 && (
+        {cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded && cfg.voices.length > 0 && (
           <SField label="Voice" hint="Which voice reads the answer.">
             <SSelect
               value={cfg.voice || cfg.defaultVoice}
@@ -119,6 +154,22 @@ export function WakeWord() {
             />
           </SField>
         )}
+
+        <SField
+          label="Keep listening after each answer"
+          hint={cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded
+            ? 'Reopen the mic after each answer so you can ask a follow-up without the wake word. The conversation ends when you stop talking (or press Escape / close the panel).'
+            : 'Reopen the mic after each answer for follow-ups without the wake word. Needs spoken answers turned on above — a follow-up cue only makes sense once the answer has been read aloud.'}
+        >
+          <div className="flex items-center gap-3">
+            <SToggle
+              value={cfg.continuous && cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded}
+              disabled={!(cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded)}
+              onChange={(v) => save({ continuous: v })}
+            />
+            {!(cfg.speak && cfg.ttsAvailable && cfg.ttsDownloaded) && <Value>Needs spoken answers</Value>}
+          </div>
+        </SField>
 
         <SField
           label="Hide the answer automatically"
@@ -178,11 +229,12 @@ export function WakeWord() {
         </SField>
       </SGroup>
 
-      <SGroup title="Your own wake word">
-        <SField label="Custom model" hint="Drop a fused openWakeWord .onnx (plus its .onnx.json) into the models folder and it appears in the list above — no reinstall needed.">
-          <Value mono>~/.curry-leaves/models/wakeword/</Value>
-        </SField>
-      </SGroup>
+        <SGroup title="Your own wake word">
+          <SField label="Custom model" hint="Drop a fused openWakeWord .onnx (plus its .onnx.json) into the models folder and it appears in the list above — no reinstall needed.">
+            <Value mono>~/.curry-leaves/models/wakeword/</Value>
+          </SField>
+        </SGroup>
+      </div>
     </>
   );
 }

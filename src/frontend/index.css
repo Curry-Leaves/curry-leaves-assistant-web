@@ -66,6 +66,15 @@
   --color-blue: oklch(0.55 0.12 240);       /* legacy: blue */
   --color-orange: oklch(0.68 0.14 70);      /* amber — "waiting on you"; mid-lightness so it reads on every theme */
 
+  /* Dashboard hero (Agent Desk banner). The NON-PHOTO backdrops sit on this base and put
+     text in hero-ink/*, so the banner harmonizes with each theme instead of being a fixed
+     dark slab. Default = a warm near-black that reads as a rich banner on the light themes;
+     dark themes deepen it, the special themes (default emerald, mono, noir) tune it to their
+     own identity below. Photo backdrops ignore this — they carry their own dark scrim. */
+  --color-hero: oklch(0.24 0.018 60);
+  --color-hero-ink: oklch(0.98 0.006 85);      /* headings/clock ON --color-hero */
+  --color-hero-ink-dim: oklch(0.98 0.006 85 / 0.62);  /* eyebrow/date/labels */
+
   /* shadows (legacy: shadow / shadowLg) */
   --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 1px 2px oklch(0 0 0 / 0.04), 0 8px 24px oklch(0 0 0 / 0.06);
   --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 2px 6px oklch(0 0 0 / 0.05), 0 30px 80px oklch(0 0 0 / 0.18);
@@ -169,6 +178,8 @@
   --tint-scrollbar: oklch(0.47 0.09 164.5 / 0.14);
   --tint-scrollbar-hover: oklch(0.47 0.09 164.5 / 0.24);
   --tint-hover: oklch(0.47 0.09 164.5 / 0.05);
+  /* Emerald identity → the hero is a deep version of the brand green. */
+  --color-hero: oklch(0.235 0.055 164.5);
 }
 /* Default nav rail + top bar each get their own centered glow instead of a flat
    fill — lighter through the middle, easing back to the flat --color-sidebar
@@ -198,6 +209,102 @@
     var(--color-sidebar) 0%,
     color-mix(in oklch, var(--color-sidebar) 80%, white) 50%,
     var(--color-sidebar) 100%);
+}
+
+/* Decorative curry-leaf pattern behind the chrome. green-leaves.png is a wide,
+   transparent-background leaf band; tiling it (repeat both axes) turns it into a
+   repeating leaf pattern across the top bar and down the sidebar rail. Placed via
+   ::after — no JSX changes, purely presentational. Both hosts are already
+   position:relative and the pattern sits behind their content (z placement + low
+   opacity) so tab labels and rail icons stay legible. */
+.app-topbar::after,
+.app-sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("./assets/icons/green-leaves.png");
+  background-repeat: repeat;
+  z-index: 0;
+  /* multiply blend: the leaves DARKEN the chrome behind them instead of painting
+     bright pixels on top, so on a light surface they read as a faint tint that can
+     never look brighter than the background. saturate() also kills the vivid green. */
+  mix-blend-mode: multiply;
+  opacity: 0.06;
+  filter: saturate(0.35);
+}
+/* Top bar: tile the band horizontally at bar height so leaves repeat across it. */
+.app-topbar::after {
+  background-size: auto 100%;
+}
+/* Keep the actual top-bar content above the leaf pattern. */
+.app-topbar > * { position: relative; z-index: 1; }
+
+/* The sidebar <aside> has no `relative` in its className, so its ::after would
+   otherwise position against the page — spilling the pattern across the whole
+   body. `relative` anchors ::after (inset:0) to the 48px rail. No overflow:hidden
+   here on purpose: the ThemeQuickPick popover deliberately spills outside the rail
+   (absolute left-[44px]) and must not be clipped. */
+.app-sidebar {
+  position: relative;
+  /* Above the main content column (a later flex sibling) so the rail's popovers —
+     ThemeQuickPick, the talk/wake tips — overlay the dashboard tiles instead of
+     being painted over by them. */
+  z-index: 30;
+}
+/* Sidebar: rotate the leaf band 90° so the branch runs vertically DOWN the rail
+   (instead of the horizontal orientation it inherits from the top bar).
+   The ::after is laid out as if horizontal — full rail height as its width,
+   full rail width as its height — then rotated 90° about its center so it snaps
+   back over the 48px rail. background-size fills the pre-rotation box height
+   (= the rail width after rotation) and tiles along its length. */
+.app-sidebar::after {
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  width: 100vh;                  /* becomes vertical extent after rotation (rail = full app height) */
+  height: 48px;                  /* becomes the rail width after rotation */
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center;
+  background-size: auto 100%;
+  background-repeat: repeat;
+}
+/* Keep the rail buttons above the pattern. */
+.app-sidebar > * { position: relative; z-index: 1; }
+
+/* Decorative leaf cluster anchored in the bottom-right corner of a page (Capture,
+   Dashboard inbox). page_rt_btm_bg.png is a transparent bottom-corner leaf art;
+   painted via ::after so no page markup needs a dedicated layer. The host must be
+   position:relative (both current hosts already are). It sits BEHIND the page content
+   (tiles/cards paint on top, staying readable) and is pointer-transparent. */
+.page-leaf-corner::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: min(42%, 460px);
+  aspect-ratio: 1 / 1;
+  pointer-events: none;
+  background-image: url("./assets/icons/page_rt_btm_bg.png");
+  background-repeat: no-repeat;
+  background-position: right bottom;
+  background-size: contain;
+  /* multiply blend: the leaves DARKEN the page behind them instead of painting bright
+     green pixels on top — so on the light canvas they read as a soft dark-green tint
+     that can never look bright. saturate() mutes the vivid hue. */
+  mix-blend-mode: multiply;
+  opacity: 0.1;
+  filter: saturate(0.35);
+  /* Sits BEHIND the page content (tiles/cards) so text stays readable — the leaves
+     only show through in empty corner space. The host's real content must establish
+     a stacking context above 0 (see .page-leaf-corner > * below). */
+  z-index: 0;
+}
+/* Lift the host's direct children above the leaf ::after so cards/reminders paint
+   on top of it. (position:relative gives z-index effect without changing layout.) */
+.page-leaf-corner > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* ── Dark — neutral warm dark (keeps the app's hue family) ───────────────────── */
@@ -231,6 +338,8 @@
   --tint-scrollbar: oklch(1 0 0 / 0.13);
   --tint-scrollbar-hover: oklch(1 0 0 / 0.24);
   --tint-hover: oklch(1 0 0 / 0.06);
+  /* Neutral warm dark → a hero a touch deeper than the page so it still reads as a band. */
+  --color-hero: oklch(0.155 0.014 80);
 }
 
 /* ── Midnight — cool deep blue-black ───────────────────────────────────────── */
@@ -264,6 +373,8 @@
   --tint-scrollbar: oklch(0.72 0.10 265 / 0.16);
   --tint-scrollbar-hover: oklch(0.72 0.10 265 / 0.30);
   --tint-hover: oklch(1 0 0 / 0.06);
+  /* Deep blue-black → a hero in the same blue family, darker than the page. */
+  --color-hero: oklch(0.135 0.030 260);
 }
 
 /* ── Mono — pure black on white (grayscale, no hue) ────────────────────────── */
@@ -297,6 +408,10 @@
   --tint-scrollbar: oklch(0 0 0 / 0.14);
   --tint-scrollbar-hover: oklch(0 0 0 / 0.26);
   --tint-hover: oklch(0 0 0 / 0.06);
+  /* Pure black-on-white → a pure-black hero, white text, no chroma. */
+  --color-hero: oklch(0.12 0 0);
+  --color-hero-ink: oklch(1 0 0);
+  --color-hero-ink-dim: oklch(1 0 0 / 0.66);
 }
 
 /* ── Noir — pure white on black (grayscale, no hue) ────────────────────────── */
@@ -330,6 +445,11 @@
   --tint-scrollbar: oklch(1 0 0 / 0.16);
   --tint-scrollbar-hover: oklch(1 0 0 / 0.30);
   --tint-hover: oklch(1 0 0 / 0.07);
+  /* Pure white-on-black → the hero is already the page black; lift it a hair so the band
+     is perceptible against the desk, keep pure-white text. */
+  --color-hero: oklch(0.07 0 0);
+  --color-hero-ink: oklch(1 0 0);
+  --color-hero-ink-dim: oklch(1 0 0 / 0.62);
 }
 
 /* ── Keyframes ported from the comp ────────────────────────────────────────── */
@@ -620,3 +740,9 @@
 }
 .ttab:hover .ttab-close, .ttab.is-active .ttab-close { opacity: 1; }
 .ttab-close:hover { background: var(--color-border); color: var(--color-ink); }
+
+/* Nav rail: scroll its own overflow on short windows rather than growing the app
+   past the viewport (which pushed the top tab bar off-screen). Scrollbar hidden —
+   the rail is icon-only and a gutter would eat half its width. */
+.rail-scroll { scrollbar-width: none; }
+.rail-scroll::-webkit-scrollbar { width: 0; height: 0; }

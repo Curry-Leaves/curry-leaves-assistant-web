@@ -428,7 +428,7 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
 
   // ── Idle landing ─────────────────────────────────────────────────────────────
   return (
-    <div className="relative flex-1 overflow-y-auto flex flex-col justify-center">
+    <div className="page-leaf-corner relative flex-1 overflow-y-auto flex flex-col justify-center">
       <FallingLeaves />
       <div className="relative z-10 max-w-[640px] mx-auto px-8 py-14 flex flex-col items-center w-full">
         <h1 className="font-serif text-[32px] text-ink text-center leading-tight">{greeting(userName)}</h1>

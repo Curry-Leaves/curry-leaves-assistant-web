@@ -28,6 +28,9 @@ export type WakeWordPatch = {
   threshold: number;
   /** Read the answer aloud. Off = the panel shows it silently. */
   speak: boolean;
+  /** Keep the mic open for a follow-up after each answer, so a back-and-forth doesn't need the
+   *  wake word every turn. The loop ends on silence (or Escape / closing the panel). */
+  continuous: boolean;
   /** Hide the answer panel on its own once the exchange ends. */
   autoDismiss: boolean;
   dismissAfterMs: number;
@@ -49,7 +52,11 @@ export type WakeWordConfig = WakeWordPatch & {
   activeHead: WakeHead | null;
   voices: string[];
   defaultVoice: string;
+  /** The kokoro package is importable — spoken replies are possible on this install. */
   ttsAvailable: boolean;
+  /** The Kokoro weights are on disk. Until true, speak() has nothing to synth with;
+   *  the setup/settings UI offers a download to flip it (we never fetch it at boot). */
+  ttsDownloaded: boolean;
 };
 
 export const getWakeWord = () => j<WakeWordConfig>('/wakeword');
@@ -78,6 +85,14 @@ export const downloadWakeWord = (head?: string) =>
     method: 'POST',
     body: JSON.stringify({ head: head ?? null }),
   });
+
+/**
+ * Fetch the Kokoro TTS weights (~300 MB) so spoken replies work, and warm the pipeline.
+ * Triggered explicitly from the setup wizard's Voice step or from Settings → Wake Word —
+ * never at boot, so an install that never enables voice never pulls these weights.
+ */
+export const downloadTts = () =>
+  j<WakeWordConfig & { error?: string }>('/wakeword/tts/download', { method: 'POST' });
 
 /**
  * Fetch one .onnx as raw bytes for the detection worker.

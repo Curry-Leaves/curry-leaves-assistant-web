@@ -67,7 +67,7 @@ function isThemeId(v: unknown): v is ThemeId {
 }
 
 export function resolveTheme(id: ThemeId): ResolvedTheme {
-  if (id === 'system') return prefersDark().matches ? 'dark' : 'paper';
+  if (id === 'system') return prefersDark().matches ? 'dark' : 'sepia';
   return id;
 }
 

@@ -15,6 +15,10 @@ import type { Agent, AppEvent, PoolItem } from '../../types';
 
 const PRIO: Record<string, string> = { P1: 'bg-rec text-white', P2: 'bg-accent text-white', P3: 'bg-ink3 text-white' };
 
+// The Office (floor-plan) home view is hidden for now — flip this to re-enable its tab and
+// make it the default home again. Everything for it (OfficeTab/OfficeView) stays in place.
+const OFFICE_ENABLED = false;
+
 type State = 'working' | 'scheduled' | 'idle' | 'paused';
 const STATE_ORDER: Record<State, number> = { working: 0, scheduled: 1, idle: 2, paused: 3 };
 function stateOf(a: Agent, running: Set<string>): State {
@@ -44,7 +48,7 @@ export function AgentsScreen({ agents, activity, running, onRefreshActivity, onR
   onRefreshActivity: () => void;
   onRefreshAgents: () => void;
 }) {
-  const [tab, setTab] = useState<'office' | 'list' | 'agents' | 'tools' | 'mcp'>('office');
+  const [tab, setTab] = useState<'office' | 'list' | 'agents' | 'tools' | 'mcp'>(OFFICE_ENABLED ? 'office' : 'list');
   const [newSignal, setNewSignal] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const isHome = tab === 'office' || tab === 'list';
@@ -62,7 +66,9 @@ export function AgentsScreen({ agents, activity, running, onRefreshActivity, onR
       <div className="flex items-center gap-3 px-3 h-12 flex-none border-b border-border">
         <div className="flex-1 flex">
           <div className="flex gap-1 bg-sidebar border border-sidebar-border rounded-[7px] p-0.5 w-fit">
-            {([['office', 'grid', 'Office'], ['list', 'steps', 'List'], ['agents', 'sparkle', 'Team'], ['tools', 'settings', 'Tools'], ['mcp', 'zap', 'MCP']] as const).map(([t, icon, label]) => (
+            {([['office', 'grid', 'Office'], ['list', 'steps', 'List'], ['agents', 'sparkle', 'Team'], ['tools', 'settings', 'Tools'], ['mcp', 'zap', 'MCP']] as const)
+              .filter(([t]) => OFFICE_ENABLED || t !== 'office')
+              .map(([t, icon, label]) => (
               <button key={t} type="button" onClick={() => { setTab(t); if (t === 'office' || t === 'list') onRefreshActivity(); }}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-[5px] text-[12.5px] ${
                   tab === t ? 'bg-card text-ink shadow-soft' : 'text-sidebar-ink3'}`}>
@@ -88,7 +94,7 @@ export function AgentsScreen({ agents, activity, running, onRefreshActivity, onR
       </div>
 
       {isHome && <OfficeTab view={tab as 'office' | 'list'} agents={agents} activity={activity} running={running} />}
-      {tab === 'agents' && <AgentsManager agents={agents} activity={activity} running={running} onRefreshAgents={onRefreshAgents} onGoOffice={() => setTab('office')} newSignal={newSignal} />}
+      {tab === 'agents' && <AgentsManager agents={agents} activity={activity} running={running} onRefreshAgents={onRefreshAgents} onGoOffice={() => setTab(OFFICE_ENABLED ? 'office' : 'list')} newSignal={newSignal} />}
       {tab === 'tools' && <ToolsManager />}
       {tab === 'mcp' && <McpManager />}
     </div>

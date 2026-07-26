@@ -16,6 +16,16 @@ export const skillsApi = {
   createSkill: (name: string, description: string, body: string) =>
     j<{ ok: boolean }>('/skills', { method: 'POST', body: JSON.stringify({ name, description, body }) }),
   deleteSkill: (name: string) => j<{ ok: boolean }>(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  // Chat header "Save as skill", two steps with the human in the loop:
+  // 1. sessionToSkill ANALYZES the conversation against the existing skill catalog — no side
+  //    effects. The model may draft a new skill, propose improving an existing learned one, or
+  //    push back (skip) when nothing durable is worth keeping / a skill already covers it.
+  // 2. applySessionSkill persists whichever draft the user confirmed in the review dialog.
+  sessionToSkill: (sid: string) =>
+    j<SkillVerdict>(`/sessions/${encodeURIComponent(sid)}/to-skill`, { method: 'POST' }),
+  applySessionSkill: (sid: string, draft: { verdict: 'create' | 'update'; name: string; description: string; body: string }) =>
+    j<{ name: string; description: string; status: string; updated: boolean }>(
+      `/sessions/${encodeURIComponent(sid)}/to-skill/apply`, { method: 'POST', body: JSON.stringify(draft) }),
 
   // Learned skills — the self-improvement loop's output (lifecycle + provenance + metrics).
   learnedSkills: () => j<{ skills: LearnedSkill[] }>('/skills/learned').then((r) => r.skills),
@@ -24,6 +34,20 @@ export const skillsApi = {
       method: 'POST', body: JSON.stringify({ status }),
     }),
 };
+
+/** The analyze step's verdict: what the model extracted and what it recommends doing with it. */
+export interface SkillVerdict {
+  verdict: 'create' | 'update' | 'skip';
+  name: string;
+  description: string;
+  body: string;
+  /** update: the learned skill to revise; skip: the skill that already covers this (if any). */
+  existing: string;
+  /** What future runs concretely gain — shown to the user before they confirm. */
+  benefits: string[];
+  /** update: what changed and why; skip: the push-back explanation. */
+  reason: string;
+}
 
 export interface LearnedSkill {
   name: string;
