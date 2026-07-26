@@ -1,0 +1,744 @@
+@import "tailwindcss";
+@import "react-grid-layout/css/styles.css";
+
+/* ── Design tokens — default `paper` theme (the app's original light palette) ─────
+   Every surface uses these semantic names (bg-bg, text-ink, border-border …) so a
+   theme is just a re-mapping of these CSS variables. `@theme` registers the utility
+   names + sets the :root defaults; the [data-theme="…"] blocks below override the
+   same variables at runtime (see theme.ts). */
+@theme {
+  /* surfaces */
+  --color-bg: oklch(0.972 0.012 82);        /* legacy: bg */
+  --color-sidebar: oklch(0.955 0.014 80);   /* legacy: bgSunken */
+  --color-card: oklch(0.985 0.010 85);      /* legacy: bgRaised */
+  --color-border: oklch(0.88 0.010 78);     /* legacy: hair */
+  --color-border-soft: oklch(0.92 0.010 78);/* legacy: hairSoft */
+
+  /* ink ladder */
+  --color-ink: oklch(0.22 0.018 60);        /* legacy: ink */
+  --color-ink2: oklch(0.36 0.014 65);       /* legacy: inkSoft */
+  --color-ink3: oklch(0.55 0.012 70);       /* legacy: muted */
+  --color-faint: oklch(0.80 0.010 75);      /* legacy: faint */
+
+  /* icon/text + hover surfaces ON --color-sidebar (defaults = ink/border ladder;
+     only themes where the sidebar breaks from the bg/card lightness family
+     — e.g. curry-leaf's near-black chrome — need to override these). */
+  --color-sidebar-ink: var(--color-ink);
+  --color-sidebar-ink3: var(--color-ink3);
+  --color-sidebar-faint: var(--color-faint);
+  --color-sidebar-border: var(--color-border);
+  --color-sidebar-border-soft: var(--color-border-soft);
+  /* active nav icon color, ON --color-sidebar-border (defaults to the brand
+     accent; themes whose sidebar pill is itself accent-colored — e.g. default's
+     green-on-green — override to sidebar-ink so the active icon stays visible). */
+  --color-sidebar-active-ink: var(--color-accent);
+
+  /* accent (legacy hue 48) */
+  --color-accent: oklch(0.62 0.15 48);      /* legacy: accent */
+  --color-accent-soft: oklch(0.88 0.07 48); /* legacy: accentSoft */
+  --color-accent-dark: oklch(0.50 0.15 48); /* darker accent (hover / ink on soft) */
+  --color-accent-ink: oklch(0.25 0.08 48);  /* legacy: accentInk — text ON accent-soft */
+  --color-on-accent: oklch(0.25 0.08 48);   /* text/icon ON a solid accent fill */
+
+  /* LoginScreen's ambient aura glows, shown ON --color-sidebar (defaults = accent
+     ladder; only themes where accent equals sidebar exactly — e.g. default's
+     green-on-green — need a lighter/darker sidebar-hue glow instead). */
+  --color-login-aura: var(--color-accent);
+  --color-login-aura-2: var(--color-accent-dark);
+
+  /* Text ON the pre-app brand pane (BrandPane: connection gate, setup wizard, PIN lock).
+     Its own ladder because the pane sits on --color-sidebar, which is a light cream in
+     most themes but a dark emerald/near-black in others — neither the ink/* ladder (dark
+     text) nor the sidebar-ink/* one (white text) is legible on both. Defaults to ink/*
+     for the light-sidebar majority; dark-sidebar themes override below. */
+  --color-brand-ink: var(--color-ink);
+  --color-brand-ink2: var(--color-ink2);
+  /* A touch darker than ink3: this pane's aura washes the ground lighter than the
+     page, and ink3 on it lands under 4:1 on the warm light themes. */
+  --color-brand-ink3: var(--color-ink2);
+  /* Marker/step-dot color on the brand pane — accent, except where accent matches the
+     pane's own background (see default's override). */
+  --color-brand-accent: var(--color-accent);
+
+  /* status */
+  --color-rec: oklch(0.60 0.20 25);         /* legacy: rec */
+  --color-ok: oklch(0.62 0.14 150);         /* legacy: green */
+  --color-blue: oklch(0.55 0.12 240);       /* legacy: blue */
+  --color-orange: oklch(0.68 0.14 70);      /* amber — "waiting on you"; mid-lightness so it reads on every theme */
+
+  /* Dashboard hero (Agent Desk banner). The NON-PHOTO backdrops sit on this base and put
+     text in hero-ink/*, so the banner harmonizes with each theme instead of being a fixed
+     dark slab. Default = a warm near-black that reads as a rich banner on the light themes;
+     dark themes deepen it, the special themes (default emerald, mono, noir) tune it to their
+     own identity below. Photo backdrops ignore this — they carry their own dark scrim. */
+  --color-hero: oklch(0.24 0.018 60);
+  --color-hero-ink: oklch(0.98 0.006 85);      /* headings/clock ON --color-hero */
+  --color-hero-ink-dim: oklch(0.98 0.006 85 / 0.62);  /* eyebrow/date/labels */
+
+  /* shadows (legacy: shadow / shadowLg) */
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 1px 2px oklch(0 0 0 / 0.04), 0 8px 24px oklch(0 0 0 / 0.06);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 2px 6px oklch(0 0 0 / 0.05), 0 30px 80px oklch(0 0 0 / 0.18);
+
+  /* type */
+  --font-serif: "Fraunces", ui-serif, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Non-Tailwind tokens used by raw CSS below (scrollbar, shimmer). Defaults = paper.
+   Each theme block overrides these alongside the color tokens. */
+:root {
+  color-scheme: light;
+  --tint-shimmer: oklch(0 0 0 / 0.05);
+  --tint-scrollbar: oklch(0 0 0 / 0.12);
+  --tint-scrollbar-hover: oklch(0 0 0 / 0.22);
+  --tint-hover: oklch(0 0 0 / 0.05);   /* generic ghost-button hover overlay */
+}
+
+/* ── Sepia — warm cream light ──────────────────────────────────────────────── */
+[data-theme="sepia"] {
+  color-scheme: light;
+  --color-bg: oklch(0.955 0.022 75);
+  --color-sidebar: oklch(0.932 0.026 72);
+  --color-card: oklch(0.975 0.020 78);
+  --color-border: oklch(0.862 0.024 68);
+  --color-border-soft: oklch(0.905 0.020 70);
+
+  --color-ink: oklch(0.28 0.032 48);
+  --color-ink2: oklch(0.40 0.028 52);
+  --color-ink3: oklch(0.55 0.024 58);
+  --color-faint: oklch(0.78 0.018 65);
+
+  --color-accent: oklch(0.56 0.13 40);
+  --color-accent-soft: oklch(0.86 0.075 45);
+  --color-accent-dark: oklch(0.45 0.13 38);
+  --color-accent-ink: oklch(0.28 0.08 42);
+  --color-on-accent: oklch(0.28 0.08 42);
+
+  --color-rec: oklch(0.56 0.18 28);
+  --color-ok: oklch(0.56 0.13 145);
+  --color-blue: oklch(0.52 0.11 235);
+
+  --tint-shimmer: oklch(0.30 0.05 50 / 0.06);
+  --tint-scrollbar: oklch(0.30 0.05 50 / 0.16);
+  --tint-scrollbar-hover: oklch(0.30 0.05 50 / 0.28);
+  --tint-hover: oklch(0.30 0.05 50 / 0.06);
+}
+
+/* ── Default — HiHelloAI brand look: warm cream canvas, emerald nav rail ───── */
+[data-theme="default"] {
+  color-scheme: light;
+  --color-bg: oklch(0.962 0.009 84.6);       /* #F5F2EC — warm cream canvas */
+  --color-sidebar: oklch(0.370 0.075 164.5); /* #074C35 — dark brand emerald nav rail */
+  --color-card: oklch(1.000 0 0);            /* #FFFFFF */
+  --color-border: oklch(0.880 0.015 84.6);       /* #DCD7CD — warm-tinted, matches canvas hue */
+  --color-border-soft: oklch(0.929 0.010 81.8);  /* #EBE7E0 */
+
+  /* sidebar chrome breaks from the light bg/card family (dark emerald), so its
+     icon/text + hover-surface tokens need their own light-on-green values.
+     Icons stay solid white whether idle or active — the pill background
+     (sidebar-border) alone signals active/hover state. */
+  --color-sidebar-ink: oklch(1 0 0);
+  --color-sidebar-ink3: oklch(1 0 0);
+  --color-sidebar-faint: oklch(1 0 0 / 0.7);  /* muted-but-legible white, not a dark faint tone */
+  --color-sidebar-active-ink: oklch(1 0 0);   /* accent is itself green — stay white, not accent */
+  --color-sidebar-border: oklch(0.445 0.080 164.5);      /* #1E6248 */
+  --color-sidebar-border-soft: oklch(0.305 0.070 164.5); /* #003A26 */
+
+  --color-ink: oklch(0.261 0.012 84.6);       /* #27241E — warm neutral, matches canvas hue */
+  --color-ink2: oklch(0.399 0.014 84.6);      /* #4B473F */
+  --color-ink3: oklch(0.501 0.015 86.9);      /* #67635A */
+  --color-faint: oklch(0.700 0.014 86.9);     /* #A29E95 */
+
+  --color-accent: oklch(0.370 0.075 164.5);      /* #074C35 — matches the nav rail exactly */
+  --color-accent-soft: oklch(0.870 0.040 163.9); /* #BDDDCD */
+  --color-accent-dark: oklch(0.300 0.070 164.5); /* #003824 */
+  --color-accent-ink: oklch(0.270 0.065 164.5);  /* #00301E */
+  --color-on-accent: oklch(1.000 0 0);
+
+  /* accent == sidebar exactly here, so LoginScreen's aura glow needs its own
+     lighter/darker sidebar-hue shades to actually show up against bg-sidebar. */
+  --color-login-aura: oklch(0.540 0.090 164.6);   /* #327F61 — lighter than sidebar */
+  --color-login-aura-2: oklch(0.230 0.055 164.5); /* #002418 — darker than sidebar */
+
+  /* The brand pane is the dark emerald sidebar here, so its text ladder inverts to
+     light-on-green (the ink/* default would be near-black on dark green). */
+  --color-brand-ink: oklch(1 0 0);
+  --color-brand-ink2: oklch(1 0 0 / 0.88);
+  --color-brand-ink3: oklch(1 0 0 / 0.72);
+  /* Accent is itself green here, so the wizard's step markers would be green-on-green.
+     Stay white — the same rule sidebar-active-ink follows for the nav rail. */
+  --color-brand-accent: oklch(1 0 0);
+
+  --color-rec: oklch(0.570 0.193 24.7);      /* #D13438 */
+  --color-ok: oklch(0.510 0.165 142.7);      /* #107C10 */
+  --color-blue: oklch(0.568 0.167 251.3);    /* #0078D4 */
+
+  --tint-shimmer: oklch(0.47 0.09 164.5 / 0.05);
+  --tint-scrollbar: oklch(0.47 0.09 164.5 / 0.14);
+  --tint-scrollbar-hover: oklch(0.47 0.09 164.5 / 0.24);
+  --tint-hover: oklch(0.47 0.09 164.5 / 0.05);
+  /* Emerald identity → the hero is a deep version of the brand green. */
+  --color-hero: oklch(0.235 0.055 164.5);
+}
+/* Default nav rail + top bar each get their own centered glow instead of a flat
+   fill — lighter through the middle, easing back to the flat --color-sidebar
+   at their own edges. The two glows are independent (not one continuous
+   gradient across both elements). Scoped via .app-sidebar/.app-topbar so
+   every other surface using --color-sidebar (tile headers, popovers, etc.)
+   stays a flat, predictable color. */
+[data-theme="default"] .app-sidebar {
+  background-color: var(--color-sidebar);
+  background-image: linear-gradient(180deg,
+    var(--color-sidebar) 0%,
+    color-mix(in oklch, var(--color-sidebar) 80%, white) 50%,
+    var(--color-sidebar) 100%);
+}
+[data-theme="default"] .app-topbar {
+  background-color: var(--color-sidebar);
+  background-image: linear-gradient(90deg,
+    var(--color-sidebar) 0%,
+    color-mix(in oklch, var(--color-sidebar) 80%, white) 50%,
+    var(--color-sidebar) 100%);
+}
+/* Dashboard tile headers echo the same horizontal center-glow as the top bar,
+   so tiles read as part of the same chrome family as the outer layout. */
+[data-theme="default"] .tile-header-sidebar {
+  background-color: var(--color-sidebar);
+  background-image: linear-gradient(90deg,
+    var(--color-sidebar) 0%,
+    color-mix(in oklch, var(--color-sidebar) 80%, white) 50%,
+    var(--color-sidebar) 100%);
+}
+
+/* Decorative curry-leaf pattern behind the chrome. green-leaves.png is a wide,
+   transparent-background leaf band; tiling it (repeat both axes) turns it into a
+   repeating leaf pattern across the top bar and down the sidebar rail. Placed via
+   ::after — no JSX changes, purely presentational. Both hosts are already
+   position:relative and the pattern sits behind their content (z placement + low
+   opacity) so tab labels and rail icons stay legible. */
+.app-topbar::after,
+.app-sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("./assets/icons/green-leaves.png");
+  background-repeat: repeat;
+  z-index: 0;
+  /* multiply blend: the leaves DARKEN the chrome behind them instead of painting
+     bright pixels on top, so on a light surface they read as a faint tint that can
+     never look brighter than the background. saturate() also kills the vivid green. */
+  mix-blend-mode: multiply;
+  opacity: 0.06;
+  filter: saturate(0.35);
+}
+/* Top bar: tile the band horizontally at bar height so leaves repeat across it. */
+.app-topbar::after {
+  background-size: auto 100%;
+}
+/* Keep the actual top-bar content above the leaf pattern. */
+.app-topbar > * { position: relative; z-index: 1; }
+
+/* The sidebar <aside> has no `relative` in its className, so its ::after would
+   otherwise position against the page — spilling the pattern across the whole
+   body. `relative` anchors ::after (inset:0) to the 48px rail. No overflow:hidden
+   here on purpose: the ThemeQuickPick popover deliberately spills outside the rail
+   (absolute left-[44px]) and must not be clipped. */
+.app-sidebar {
+  position: relative;
+  /* Above the main content column (a later flex sibling) so the rail's popovers —
+     ThemeQuickPick, the talk/wake tips — overlay the dashboard tiles instead of
+     being painted over by them. */
+  z-index: 30;
+}
+/* Sidebar: rotate the leaf band 90° so the branch runs vertically DOWN the rail
+   (instead of the horizontal orientation it inherits from the top bar).
+   The ::after is laid out as if horizontal — full rail height as its width,
+   full rail width as its height — then rotated 90° about its center so it snaps
+   back over the 48px rail. background-size fills the pre-rotation box height
+   (= the rail width after rotation) and tiles along its length. */
+.app-sidebar::after {
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  width: 100vh;                  /* becomes vertical extent after rotation (rail = full app height) */
+  height: 48px;                  /* becomes the rail width after rotation */
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center;
+  background-size: auto 100%;
+  background-repeat: repeat;
+}
+/* Keep the rail buttons above the pattern. */
+.app-sidebar > * { position: relative; z-index: 1; }
+
+/* Decorative leaf cluster anchored in the bottom-right corner of a page (Capture,
+   Dashboard inbox). page_rt_btm_bg.png is a transparent bottom-corner leaf art;
+   painted via ::after so no page markup needs a dedicated layer. The host must be
+   position:relative (both current hosts already are). It sits BEHIND the page content
+   (tiles/cards paint on top, staying readable) and is pointer-transparent. */
+.page-leaf-corner::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: min(42%, 460px);
+  aspect-ratio: 1 / 1;
+  pointer-events: none;
+  background-image: url("./assets/icons/page_rt_btm_bg.png");
+  background-repeat: no-repeat;
+  background-position: right bottom;
+  background-size: contain;
+  /* multiply blend: the leaves DARKEN the page behind them instead of painting bright
+     green pixels on top — so on the light canvas they read as a soft dark-green tint
+     that can never look bright. saturate() mutes the vivid hue. */
+  mix-blend-mode: multiply;
+  opacity: 0.1;
+  filter: saturate(0.35);
+  /* Sits BEHIND the page content (tiles/cards) so text stays readable — the leaves
+     only show through in empty corner space. The host's real content must establish
+     a stacking context above 0 (see .page-leaf-corner > * below). */
+  z-index: 0;
+}
+/* Lift the host's direct children above the leaf ::after so cards/reminders paint
+   on top of it. (position:relative gives z-index effect without changing layout.) */
+.page-leaf-corner > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Dark — neutral warm dark (keeps the app's hue family) ───────────────────── */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: oklch(0.205 0.012 80);
+  --color-sidebar: oklch(0.172 0.012 80);
+  --color-card: oklch(0.245 0.013 82);
+  --color-border: oklch(0.325 0.013 78);
+  --color-border-soft: oklch(0.285 0.012 78);
+
+  --color-ink: oklch(0.945 0.010 85);
+  --color-ink2: oklch(0.815 0.012 82);
+  --color-ink3: oklch(0.635 0.012 78);
+  --color-faint: oklch(0.42 0.010 75);
+
+  --color-accent: oklch(0.71 0.145 50);
+  --color-accent-soft: oklch(0.40 0.085 48);
+  --color-accent-dark: oklch(0.80 0.14 52);
+  --color-accent-ink: oklch(0.90 0.05 48);
+  --color-on-accent: oklch(0.90 0.05 48);
+
+  --color-rec: oklch(0.66 0.20 25);
+  --color-ok: oklch(0.70 0.14 152);
+  --color-blue: oklch(0.70 0.12 240);
+
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 1px 2px oklch(0 0 0 / 0.30), 0 8px 24px oklch(0 0 0 / 0.38);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 2px 6px oklch(0 0 0 / 0.40), 0 30px 80px oklch(0 0 0 / 0.58);
+
+  --tint-shimmer: oklch(1 0 0 / 0.06);
+  --tint-scrollbar: oklch(1 0 0 / 0.13);
+  --tint-scrollbar-hover: oklch(1 0 0 / 0.24);
+  --tint-hover: oklch(1 0 0 / 0.06);
+  /* Neutral warm dark → a hero a touch deeper than the page so it still reads as a band. */
+  --color-hero: oklch(0.155 0.014 80);
+}
+
+/* ── Midnight — cool deep blue-black ───────────────────────────────────────── */
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --color-bg: oklch(0.185 0.026 258);
+  --color-sidebar: oklch(0.152 0.028 260);
+  --color-card: oklch(0.225 0.028 257);
+  --color-border: oklch(0.305 0.032 255);
+  --color-border-soft: oklch(0.262 0.030 256);
+
+  --color-ink: oklch(0.95 0.012 250);
+  --color-ink2: oklch(0.82 0.020 250);
+  --color-ink3: oklch(0.625 0.026 252);
+  --color-faint: oklch(0.40 0.026 252);
+
+  --color-accent: oklch(0.72 0.15 265);
+  --color-accent-soft: oklch(0.38 0.10 265);
+  --color-accent-dark: oklch(0.81 0.14 265);
+  --color-accent-ink: oklch(0.90 0.05 265);
+  --color-on-accent: oklch(0.90 0.05 265);
+
+  --color-rec: oklch(0.67 0.20 18);
+  --color-ok: oklch(0.73 0.14 160);
+  --color-blue: oklch(0.72 0.13 245);
+
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 1px 2px oklch(0 0 0 / 0.32), 0 8px 24px oklch(0 0 0 / 0.42);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 2px 6px oklch(0 0 0 / 0.42), 0 30px 80px oklch(0 0 0 / 0.62);
+
+  --tint-shimmer: oklch(1 0 0 / 0.06);
+  --tint-scrollbar: oklch(0.72 0.10 265 / 0.16);
+  --tint-scrollbar-hover: oklch(0.72 0.10 265 / 0.30);
+  --tint-hover: oklch(1 0 0 / 0.06);
+  /* Deep blue-black → a hero in the same blue family, darker than the page. */
+  --color-hero: oklch(0.135 0.030 260);
+}
+
+/* ── Mono — pure black on white (grayscale, no hue) ────────────────────────── */
+[data-theme="mono"] {
+  color-scheme: light;
+  --color-bg: oklch(1 0 0);
+  --color-sidebar: oklch(0.965 0 0);
+  --color-card: oklch(1 0 0);
+  --color-border: oklch(0.84 0 0);
+  --color-border-soft: oklch(0.91 0 0);
+
+  --color-ink: oklch(0 0 0);
+  --color-ink2: oklch(0.30 0 0);
+  --color-ink3: oklch(0.50 0 0);
+  --color-faint: oklch(0.74 0 0);
+
+  --color-accent: oklch(0 0 0);
+  --color-accent-soft: oklch(0.88 0 0);
+  --color-accent-dark: oklch(0.22 0 0);
+  --color-accent-ink: oklch(0 0 0);
+  --color-on-accent: oklch(1 0 0);          /* white text on the black accent fill */
+
+  --color-rec: oklch(0.30 0 0);
+  --color-ok: oklch(0.30 0 0);
+  --color-blue: oklch(0.30 0 0);
+
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 1px 2px oklch(0 0 0 / 0.06), 0 8px 24px oklch(0 0 0 / 0.08);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 2px 6px oklch(0 0 0 / 0.08), 0 30px 80px oklch(0 0 0 / 0.22);
+
+  --tint-shimmer: oklch(0 0 0 / 0.05);
+  --tint-scrollbar: oklch(0 0 0 / 0.14);
+  --tint-scrollbar-hover: oklch(0 0 0 / 0.26);
+  --tint-hover: oklch(0 0 0 / 0.06);
+  /* Pure black-on-white → a pure-black hero, white text, no chroma. */
+  --color-hero: oklch(0.12 0 0);
+  --color-hero-ink: oklch(1 0 0);
+  --color-hero-ink-dim: oklch(1 0 0 / 0.66);
+}
+
+/* ── Noir — pure white on black (grayscale, no hue) ────────────────────────── */
+[data-theme="noir"] {
+  color-scheme: dark;
+  --color-bg: oklch(0 0 0);
+  --color-sidebar: oklch(0.08 0 0);
+  --color-card: oklch(0.14 0 0);
+  --color-border: oklch(0.32 0 0);
+  --color-border-soft: oklch(0.24 0 0);
+
+  --color-ink: oklch(1 0 0);
+  --color-ink2: oklch(0.80 0 0);
+  --color-ink3: oklch(0.60 0 0);
+  --color-faint: oklch(0.42 0 0);
+
+  --color-accent: oklch(1 0 0);
+  --color-accent-soft: oklch(0.30 0 0);
+  --color-accent-dark: oklch(0.82 0 0);
+  --color-accent-ink: oklch(1 0 0);
+  --color-on-accent: oklch(0 0 0);          /* black text on the white accent fill */
+
+  --color-rec: oklch(0.80 0 0);
+  --color-ok: oklch(0.80 0 0);
+  --color-blue: oklch(0.80 0 0);
+
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 1px 2px oklch(0 0 0 / 0.40), 0 8px 24px oklch(0 0 0 / 0.50);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 2px 6px oklch(0 0 0 / 0.50), 0 30px 80px oklch(0 0 0 / 0.70);
+
+  --tint-shimmer: oklch(1 0 0 / 0.07);
+  --tint-scrollbar: oklch(1 0 0 / 0.16);
+  --tint-scrollbar-hover: oklch(1 0 0 / 0.30);
+  --tint-hover: oklch(1 0 0 / 0.07);
+  /* Pure white-on-black → the hero is already the page black; lift it a hair so the band
+     is perceptible against the desk, keep pure-white text. */
+  --color-hero: oklch(0.07 0 0);
+  --color-hero-ink: oklch(1 0 0);
+  --color-hero-ink-dim: oklch(1 0 0 / 0.62);
+}
+
+/* ── Keyframes ported from the comp ────────────────────────────────────────── */
+@keyframes mrm-breathe { 0%,100% { transform: scale(1); opacity: .9 } 50% { transform: scale(1.22); opacity: .55 } }
+@keyframes mrm-blink   { 0%,100% { opacity: 1 } 50% { opacity: .2 } }
+@keyframes mrm-pulse   { 0%,100% { transform: scale(1); opacity: 1 } 50% { transform: scale(.82); opacity: .5 } }
+@keyframes mrm-rise    { from { transform: translateY(10px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+@keyframes mrm-bounce  { 0%,80%,100% { transform: translateY(0); opacity: .4 } 40% { transform: translateY(-3px); opacity: 1 } }
+@keyframes mrm-shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
+@keyframes mrm-slide-in { from { transform: translateX(-100%); opacity: .4 } to { transform: translateX(0); opacity: 1 } }
+@keyframes mrm-spin    { to { transform: rotate(360deg) } }
+
+.an-breathe { animation: mrm-breathe 2.9s ease-in-out infinite; }
+.an-blink   { animation: mrm-blink 1.6s ease-in-out infinite; }
+.an-pulse   { animation: mrm-pulse 1.5s ease-in-out infinite; }
+.an-rise    { animation: mrm-rise .4s ease-out both; }
+.an-slide-in { animation: mrm-slide-in .22s ease-out both; }
+.an-spin    { animation: mrm-spin 3.2s linear infinite; transform-origin: center; }
+
+/* ─── Rail tooltip ─────────────────────────────────────────────────────────────
+   The left rail is icon-only, so a new user has no way to learn what anything is.
+   This is the label: a bubble that pops out to the right of the hovered icon with
+   a small arrow poking back at it. Pure CSS (no JS state) — the rail is hovered
+   constantly and re-rendering the whole sidebar on every mouse move is not worth
+   a label. Escapes the rail because the aside is NOT a scroll container — an
+   `overflow-y-auto` there forces overflow-x to `auto` too, which clips this bubble
+   horizontally and drops it behind the main content. Keep the rail non-scrolling. */
+@keyframes rail-tip-in { from { opacity: 0; transform: translateY(-50%) translateX(-3px) } to { opacity: 1; transform: translateY(-50%) translateX(0) } }
+
+/* Anchored to the RAIL's edge, not the button's. The button is w-9 (36px) inside a
+   w-12 (48px) rail, so `left: 100%` would start 6px shy of the sidebar and the arrow
+   would point at empty space — which is exactly what made this read as a detached
+   floating box. calc(100% + 6px) puts the arrow tip flush on the rail edge, so the
+   bubble looks like it grows out of the sidebar. */
+.rail-tip {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  pointer-events: none;   /* never eats the click meant for the icon */
+  opacity: 0;
+  visibility: hidden;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  box-shadow: var(--shadow-pop);
+}
+
+/* The poke: a rotated square straddling the bubble's left edge so its far corner
+   lands on the rail. Bordered on the two sides that show, and half its width is
+   tucked behind the bubble body — that overlap is what makes arrow + bubble read
+   as one continuous shape instead of two touching objects. */
+.rail-tip::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  transform: rotate(45deg);
+  border-radius: 1px 0 0 0;
+  background: var(--color-card);
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.rail-tip-wide {
+  white-space: normal;
+  width: 200px;
+  line-height: 1.35;
+}
+
+/* :focus-within, not :focus-visible — the focus lands on the inner button, never on
+   this wrapper, so a :focus-visible rule here would simply never match. */
+.rail-tip-host:hover > .rail-tip,
+.rail-tip-host:has(> :focus-visible) > .rail-tip {
+  opacity: 1;
+  visibility: visible;
+  animation: rail-tip-in .12s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-tip-host:hover > .rail-tip,
+  .rail-tip-host:has(> :focus-visible) > .rail-tip { animation: none; }
+}
+
+/* ─── Login (PIN lock) ─────────────────────────────────────────────────────── */
+@keyframes lp-aura  { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(3%,-4%) scale(1.15); } 100% { transform: translate(0,0) scale(1); } }
+@keyframes lp-aura2 { 0% { transform: translate(0,0) scale(1.1); } 50% { transform: translate(-4%,3%) scale(1); } 100% { transform: translate(0,0) scale(1.1); } }
+@keyframes lp-shake { 10%,90% { transform: translateX(-1px); } 20%,80% { transform: translateX(2px); } 30%,50%,70% { transform: translateX(-5px); } 40%,60% { transform: translateX(5px); } }
+@keyframes lp-pop   { 0% { transform: scale(0); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes lp-ring  { 0% { transform: scale(.85); opacity: .5; } 100% { transform: scale(1.6); opacity: 0; } }
+
+.lp-aura  { animation: lp-aura 14s ease-in-out infinite; }
+.lp-aura2 { animation: lp-aura2 18s ease-in-out infinite; }
+.lp-shake { animation: lp-shake .5s cubic-bezier(.36,.07,.19,.97) both; }
+.lp-pop   { animation: lp-pop .28s cubic-bezier(.34,1.56,.64,1) both; }
+.lp-ring  { animation: lp-ring 2.6s ease-out infinite; }
+
+/* Falling leaves — drift down + sideways sway + tumble, driven by per-leaf
+   --leaf-drift/--leaf-spin custom properties set inline (see FallingLeaves). */
+@keyframes lp-leaf-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  50%  { transform: translate(var(--leaf-drift), 50vh) rotate(calc(var(--leaf-spin) * 0.5)); }
+  100% { transform: translate(0, 100vh) rotate(var(--leaf-spin)); }
+}
+.lp-leaf {
+  animation-name: lp-leaf-fall;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-leaf { animation: none; opacity: 0; }
+}
+
+/* Faint dotted texture behind the keypad card — breaks up the bare-background
+   feel without competing with the branding pane's aura. */
+.lp-dots {
+  background-image: radial-gradient(color-mix(in oklch, var(--color-ink) 14%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(80% 80% at 50% 45%, #000 0%, transparent 75%);
+  mask-image: radial-gradient(80% 80% at 50% 45%, #000 0%, transparent 75%);
+}
+
+/* Keypad buttons: a raised, slightly domed look (gradient fill + inset
+   highlight + soft drop shadow) instead of a flat outlined circle. */
+.lp-key {
+  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, color-mix(in oklch, var(--color-card) 100%, white 6%), var(--color-card));
+  box-shadow:
+    0 1px 0 oklch(1 0 0 / 0.5) inset,
+    0 1px 2px oklch(0 0 0 / 0.04),
+    0 6px 14px oklch(0 0 0 / 0.06);
+  transition: transform .1s, box-shadow .15s, border-color .15s, color .15s;
+}
+.lp-key:hover:not(:disabled) {
+  box-shadow:
+    0 1px 0 oklch(1 0 0 / 0.5) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-accent) 25%, transparent),
+    0 8px 20px color-mix(in oklch, var(--color-accent) 18%, transparent);
+}
+.lp-key:active:not(:disabled) {
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.08) inset;
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, var(--tint-shimmer), transparent);
+  background-size: 800px 100%;
+  animation: mrm-shimmer 1.4s linear infinite;
+}
+
+/* Theme-aware scrollbars (the inline <style> in index.html only covers first paint) */
+::-webkit-scrollbar-thumb {
+  background: var(--tint-scrollbar);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tint-scrollbar-hover);
+  background-clip: padding-box;
+}
+
+.drag { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+
+/* ── Fancy dashboard tile styles ────────────────────────────────────────────
+   Built from theme tokens (--color-accent/-dark, --color-card) via color-mix
+   and conic-gradient, not hardcoded hex, so they stay correct on every theme. */
+.tile-glass {
+  background: color-mix(in oklch, var(--color-card) 62%, transparent);
+  border: 1px solid color-mix(in oklch, var(--color-border) 70%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+/* Header/footer dividers on a glass tile — a flat opaque border-border would
+   read as a hard seam across the frosted surface, so this stays translucent
+   like the outer border above. */
+.tile-glass-strip {
+  border-color: color-mix(in oklch, var(--color-border) 55%, transparent);
+}
+
+.tile-glow {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  box-shadow:
+    0 1px 0 oklch(1 0 0 / 0.5) inset,
+    0 0 0 1px color-mix(in oklch, var(--color-accent) 18%, transparent),
+    0 8px 28px color-mix(in oklch, var(--color-accent) 22%, transparent),
+    0 2px 8px oklch(0 0 0 / 0.06);
+}
+
+.tile-gradient-edge {
+  background: var(--color-card);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+.tile-gradient-edge::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--gradient-angle, 0deg),
+    var(--color-accent), var(--color-blue), var(--color-accent-dark), var(--color-accent));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: mrm-gradient-spin 6s linear infinite;
+  pointer-events: none;
+}
+@property --gradient-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes mrm-gradient-spin {
+  to { --gradient-angle: 360deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-gradient-edge::before { animation: none; }
+}
+
+/* ── Working tile: indeterminate sweep across the tile's top edge ──────────
+   Uses transform (GPU-composited) rather than `left` so the sweep never
+   triggers layout/paint. The bar is one tile-width wide and slides from
+   just off the left edge to just off the right. */
+.tile-progress { left: 0; animation: tile-progress 1.15s ease-in-out infinite; will-change: transform; }
+@keyframes tile-progress {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-progress { animation: none; width: 100%; transform: none; opacity: .55; }
+}
+
+/* ── Top tab bar: straight-edged browser-style tabs (classic design) ──────
+   Per-state colours live here so the components stay style-prop-free.
+   Outer shape = border colour; inner shape inset ~1.5px reveals the border. */
+.ttab-group-outer {
+  border-radius: 5px 5px 0 0;
+  background: var(--color-border);
+  flex-shrink: 0;
+  padding: 1px 1px 0 1px;
+}
+.ttab-group-inner {
+  display: flex; align-items: flex-end; gap: 2px;
+  border-radius: 4px 4px 0 0;
+  background: var(--color-sidebar);
+  padding: 4px 4px 0 4px;
+}
+.ttab {
+  flex-shrink: 0; height: 30px; cursor: pointer; user-select: none; z-index: 1;
+  border-radius: 5px 5px 0 0;
+  background: transparent; transition: background .12s;
+  padding: 1px 1px 0 1px;
+}
+.ttab:hover { background: var(--color-border-soft); z-index: 2; }
+.ttab.is-active { background: var(--color-border); z-index: 3; }
+.ttab-inner {
+  display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 10px 0 12px;
+  border-radius: 4px 4px 0 0;
+  background: transparent; transition: background .12s;
+}
+.ttab:hover .ttab-inner { background: var(--color-border-soft); }
+.ttab.is-active .ttab-inner { background: var(--color-bg); }
+.ttab-icon {
+  display: flex; flex-shrink: 0; color: var(--color-sidebar-faint); transition: color .12s;
+}
+.ttab:hover .ttab-icon { color: var(--color-ink2); }
+.ttab.is-active .ttab-icon { color: var(--color-accent); }
+.ttab-label {
+  font-size: 11.5px; font-weight: 400; white-space: nowrap; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; color: var(--color-sidebar-faint);
+}
+.ttab:hover .ttab-label { color: var(--color-ink2); }
+.ttab.is-active .ttab-label { color: var(--color-ink); font-weight: 500; }
+.ttab-close {
+  width: 15px; height: 15px; display: flex; align-items: center; justify-content: center;
+  border-radius: 3px; flex-shrink: 0; opacity: 0; color: var(--color-ink3);
+  transition: opacity .1s, background .1s;
+}
+.ttab:hover .ttab-close, .ttab.is-active .ttab-close { opacity: 1; }
+.ttab-close:hover { background: var(--color-border); color: var(--color-ink); }

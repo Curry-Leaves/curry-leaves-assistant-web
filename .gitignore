@@ -1,0 +1,16 @@
+node_modules/
+.vite/
+dist/
+*.log
+.DS_Store
+
+# Secrets / local env
+.env
+*.env
+!*.env.example
+!*.env.*.example
+
+# Agent files
+CLAUDE.md
+AGENTS.md
+ONBOARDING.md
