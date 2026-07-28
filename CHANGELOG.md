@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-27
+
+### Added
+
+- **Copilot model picker: Custom… free-text option.** The model dropdown now
+  offers a "Custom…" entry that swaps to a free-text input, letting you enter a
+  model id the models endpoint doesn't list yet (e.g. a preview or beta id).
+  A picked model that isn't in the pulled catalog is treated as custom
+  automatically, and a datalist still surfaces the known ids as suggestions.
+
 ## [1.0.3] - 2026-07-26
 
 ### Fixed

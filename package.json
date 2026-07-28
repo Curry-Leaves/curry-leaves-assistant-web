@@ -1,7 +1,7 @@
 {
   "name": "curry-leaves-assistant-web",
   "productName": "Curry Leaves",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Curry Leaves — shared React web UI. Built to a static dist/ and bundled into the Python backend (curry-leaves-assistant).",
   "license": "SEE LICENSE IN LICENSE",
   "author": {

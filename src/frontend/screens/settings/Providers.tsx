@@ -227,8 +227,13 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
   const [device, setDevice] = useState<{ user_code: string; verification_uri: string } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
+  const [custom, setCustom] = useState(false);
   const polling = useRef(false);
   useEffect(() => () => { polling.current = false; }, []);
+
+  const model = cfg.model || '';
+  // Free-text if the picked model isn't among the pulled ones (e.g. a preview/beta id typed by hand).
+  const isCustom = custom || (!!model && models.length > 0 && !models.some((m) => m.id === model));
 
   const connect = async () => {
     setError(''); setConnecting(true); setDevice(null);
@@ -280,16 +285,26 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
           </div>
           <label className="flex items-center gap-3">
             <span className="text-[12px] text-ink2 w-[80px]">Model</span>
-            <div className="relative flex-1 min-w-0">
-              {/* No implicit default: the poll list is alphabetical (claude-fable-5 first),
-                  so a silent fallback runs agents on whatever sorts to the top. */}
-              <select value={cfg.model || ''} onChange={(e) => onSave({ model: e.target.value })}
-                className={`w-full appearance-none h-[30px] pl-2.5 pr-6 rounded-[6px] border bg-bg text-[12px] font-mono outline-none cursor-pointer ${cfg.model ? 'border-border text-ink' : 'border-rec text-rec'}`}>
-                <option value="" disabled>Select a model…</option>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </select>
-              <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-ink3 rotate-90"><Icon name="chevR" size={11} /></span>
-            </div>
+            {/* Populated from the pulled catalog. Custom… → free-text escape hatch for a model
+                id the models endpoint doesn't list yet (preview/beta). */}
+            {!isCustom ? (
+              <div className="relative flex-1 min-w-0">
+                {/* No implicit default: the poll list is alphabetical (claude-fable-5 first),
+                    so a silent fallback runs agents on whatever sorts to the top. */}
+                <select value={model} onChange={(e) => { if (e.target.value === '__custom__') { setCustom(true); onSave({ model: '' }); } else onSave({ model: e.target.value }); }}
+                  className={`w-full appearance-none h-[30px] pl-2.5 pr-6 rounded-[6px] border bg-bg text-[12px] font-mono outline-none cursor-pointer ${model ? 'border-border text-ink' : 'border-rec text-rec'}`}>
+                  <option value="" disabled>Select a model…</option>
+                  {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+                  <option value="__custom__">Custom…</option>
+                </select>
+                <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-ink3 rotate-90"><Icon name="chevR" size={11} /></span>
+              </div>
+            ) : (
+              <input value={model} onChange={(e) => onSave({ model: e.target.value })} placeholder="model id" list="copilot-models"
+                onBlur={() => { if (!model) setCustom(false); }}
+                className="flex-1 min-w-0 h-[30px] px-2.5 rounded-[6px] border border-border bg-bg text-ink text-[12px] font-mono outline-none" />
+            )}
+            <datalist id="copilot-models">{models.map((m) => <option key={m.id} value={m.id} />)}</datalist>
           </label>
           {!cfg.model && (
             <div className="text-[11.5px] text-rec">Select a default model — agents and chat can't run on Copilot until you pick one.</div>
