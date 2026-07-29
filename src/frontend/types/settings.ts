@@ -1,5 +1,5 @@
 export interface AiModelTiers { less?: string; medium?: string; heavy?: string; smart?: string }
-export interface AiProviderCfg { apiKey?: string; model?: string; baseUrl?: string; tiers?: AiModelTiers; enabled?: boolean; custom?: boolean; name?: string }
+export interface AiProviderCfg { apiKey?: string; model?: string; clientId?: string; headers?: Record<string, string>; baseUrl?: string; tiers?: AiModelTiers; enabled?: boolean; custom?: boolean; name?: string }
 /** `usage` is what the user picked in the first-run wizard (see screens/setup/steps/UsageStep):
  *  a subset of 'meetings' | 'voice' | 'knowledge' | 'agents'. */
 export interface IdentityCfg { name: string; work: string; behavior: string; workingHours: string; usage: string[] }

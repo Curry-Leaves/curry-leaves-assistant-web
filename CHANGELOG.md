@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-28
+
+### Added
+
+- **Copilot connection: Advanced overrides.** The GitHub Copilot card gained an
+  "Advanced" section with two optional fields: a **Client ID** override and a
+  **custom Headers** editor (one `Name: value` per line). Leaving them blank uses
+  the default Curry Leaves app and request identity. Supplying a client id and/or
+  custom headers switches the connection to GitHub's token-exchange path, which can
+  change which models GitHub returns — this is the user's choice and their
+  responsibility under GitHub's terms. Both take effect on the next connect.
+
 ## [1.1.0] - 2026-07-27
 
 ### Added

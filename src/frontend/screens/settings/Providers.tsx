@@ -220,14 +220,33 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
 }
 
 function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave }: {
-  active: boolean; connected: boolean; models: { id: string }[]; cfg: { model?: string; tiers?: AiModelTiers };
-  onUse: () => void; onChanged: () => void; onSave: (next: { model?: string; tiers?: AiModelTiers }) => Promise<void>;
+  active: boolean; connected: boolean; models: { id: string }[]; cfg: { model?: string; clientId?: string; headers?: Record<string, string>; tiers?: AiModelTiers };
+  onUse: () => void; onChanged: () => void; onSave: (next: { model?: string; clientId?: string; headers?: Record<string, string>; tiers?: AiModelTiers }) => Promise<void>;
 }) {
   const p = SPECIAL_META.copilot;
   const [device, setDevice] = useState<{ user_code: string; verification_uri: string } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
   const [custom, setCustom] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [clientId, setClientId] = useState(cfg.clientId || '');
+  // Headers are edited as "Name: value" lines (one per line) — simplest faithful editor for an
+  // arbitrary header map. Parsed back to an object on blur.
+  const headersToText = (h?: Record<string, string>) => Object.entries(h || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+  const [headersText, setHeadersText] = useState(headersToText(cfg.headers));
+  useEffect(() => { setClientId(cfg.clientId || ''); }, [cfg.clientId]);
+  useEffect(() => { setHeadersText(headersToText(cfg.headers)); }, [cfg.headers]);
+  const parseHeaders = (text: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const line of text.split('\n')) {
+      const i = line.indexOf(':');
+      if (i < 0) continue;
+      const k = line.slice(0, i).trim();
+      const v = line.slice(i + 1).trim();
+      if (k) out[k] = v;
+    }
+    return out;
+  };
   const polling = useRef(false);
   useEffect(() => () => { polling.current = false; }, []);
 
@@ -321,6 +340,45 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
               className="h-[30px] px-3 rounded-[6px] bg-accent text-white text-[12px] font-550 inline-flex items-center gap-1.5 disabled:opacity-60">
               <Icon name="sparkle" size={13} /> {connecting ? 'Waiting for authorization…' : 'Connect GitHub Copilot'}
             </button>
+          </div>
+          {/* Advanced: override the GitHub OAuth client id used at connect. Default ("") is our own
+              registered app, which is granted the GA model set. A user who understands the trade-off
+              (and the terms) can supply a different id to try to unlock more models — their choice. */}
+          <div>
+            <button type="button" onClick={() => setAdvanced((a) => !a)}
+              className="inline-flex items-center gap-1 text-[11px] text-ink3 hover:text-ink2">
+              <span className={advanced ? 'rotate-90' : ''}><Icon name="chevR" size={10} /></span> Advanced
+            </button>
+            {advanced && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <label className="flex items-center gap-3">
+                  <span className="text-[12px] text-ink2 w-[80px] flex-none">Client ID</span>
+                  <input value={clientId} onChange={(e) => setClientId(e.target.value)}
+                    onBlur={() => { if (clientId !== (cfg.clientId || '')) onSave({ clientId: clientId.trim() }); }}
+                    placeholder="(default: Curry Leaves app)"
+                    className="flex-1 min-w-0 h-[30px] px-2.5 rounded-[6px] border border-border bg-bg text-ink text-[12px] font-mono outline-none" />
+                </label>
+                <p className="text-[11px] text-ink3 leading-relaxed">
+                  Overrides the GitHub OAuth client id used to sign in. Leave blank to use the Curry
+                  Leaves app (recommended). Changing it affects what models GitHub grants your account
+                  and is your responsibility under GitHub's terms. Takes effect on the next connect.
+                </p>
+                <label className="flex items-start gap-3 mt-1">
+                  <span className="text-[12px] text-ink2 w-[80px] flex-none pt-1.5">Headers</span>
+                  <textarea value={headersText} onChange={(e) => setHeadersText(e.target.value)}
+                    onBlur={() => { const next = parseHeaders(headersText); if (JSON.stringify(next) !== JSON.stringify(cfg.headers || {})) onSave({ headers: next }); }}
+                    rows={3} spellCheck={false}
+                    placeholder={'Copilot-Integration-Id: vscode-chat\nEditor-Version: vscode/1.95.0'}
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-[6px] border border-border bg-bg text-ink text-[11.5px] font-mono outline-none resize-y leading-snug" />
+                </label>
+                <p className="text-[11px] text-ink3 leading-relaxed">
+                  Custom headers sent on Copilot requests, one <span className="font-mono">Name: value</span> per
+                  line. Leave empty to use the default request identity (recommended). Supplying headers
+                  can change which models GitHub returns and is your responsibility under GitHub's terms.
+                  Takes effect on the next connect.
+                </p>
+              </div>
+            )}
           </div>
           {device && (
             <div className="rounded-[8px] border border-accent bg-accent-soft/40 px-3.5 py-3 text-[12.5px] text-ink">
@@ -608,7 +666,7 @@ export function AiProviders() {
   const active = settings?.ai.active || '';
   const providers = settings?.ai.providers || {};
 
-  const saveProvider = async (id: string, next: { apiKey?: string; model?: string; baseUrl?: string; tiers?: AiModelTiers; enabled?: boolean; name?: string; custom?: boolean }) => {
+  const saveProvider = async (id: string, next: { apiKey?: string; model?: string; clientId?: string; headers?: Record<string, string>; baseUrl?: string; tiers?: AiModelTiers; enabled?: boolean; name?: string; custom?: boolean }) => {
     await api.patchAiSettings({ providers: { [id]: next } });
     load();
   };
