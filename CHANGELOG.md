@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-09
+
+### Changed
+
+- **Smaller published bundle.** The decorative background PNGs (leaf art and the
+  dashboard scenes) were recompressed to a 256-colour palette with no visible
+  quality loss, cutting them from ~24 MB to ~6 MB. The published npm tarball
+  drops from ~34 MB to ~15 MB, so `npm install` and every backend deployment
+  pull far less.
+
 ## [1.3.0] - 2026-08-09
 
 ### Added
@@ -168,6 +178,7 @@ into its own repository, published as a standalone static bundle.
 - The app icon is vendored under `src/frontend/assets/`, removing the previous
   cross-repo dependency on the backend's `assets/` directory.
 
+[1.3.1]: https://github.com/Curry-Leaves/curry-leaves-assistant-web/releases/tag/v1.3.1
 [1.3.0]: https://github.com/Curry-Leaves/curry-leaves-assistant-web/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Curry-Leaves/curry-leaves-assistant-web/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Curry-Leaves/curry-leaves-assistant-web/releases/tag/v1.1.0
