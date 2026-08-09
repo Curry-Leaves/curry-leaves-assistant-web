@@ -100,7 +100,13 @@ function sanitizeSegment(s: string): string {
     .replace(/(?<!\\)\{/g, '\\{')
     // A `<` that starts something tag-shaped but is really prose (List<T>, a<b) -> escape it.
     // Anything that looks like a real, closable element is left for MDX to parse.
-    .replace(new RegExp(`<(?=${TAG})(?![^<>]*>[\\s\\S]*</)`, 'g'), '&lt;');
+    //
+    // The void tags normalized just above are exempt: they self-close, so they never have a
+    // matching `</…>` and would otherwise fall into this rule and be escaped. That matters for
+    // images — a RESIZED image must reach the rich editor as a live `<img …/>` (the only form
+    // MDXEditor reads width/height from), and escaping it here would show the user raw markup
+    // instead of a picture.
+    .replace(new RegExp(`<(?!(?:${VOID_TAGS})\\b)(?=${TAG})(?![^<>]*>[\\s\\S]*</)`, 'gi'), '&lt;');
 }
 
 /** Rewrite `md` so the MDX parser accepts it, leaving code spans/blocks untouched. */

@@ -73,12 +73,29 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [live]);
 
+  // ── Live Copilot ───────────────────────────────────────────────────────────
+  // The app-level default (Settings → Live Copilot; off unless the user opted in) and this
+  // recording's override of it. `copilotOn` is what the UI and the backend both act on.
+  // Each new recording starts from the app default again — a one-meeting override shouldn't
+  // silently persist into the next meeting.
+  const [copilotDefault, setCopilotDefault] = useState(false);
+  const [copilotOverride, setCopilotOverride] = useState<boolean | null>(null);
+  const copilotOn = copilotOverride ?? copilotDefault;
+  useEffect(() => { setCopilotOverride(null); }, [rec.recordingId]);
+  // Re-read on every entry to Capture, so flipping the setting in Settings and coming back
+  // here shows the new default rather than the one loaded at mount.
+  useEffect(() => {
+    if (active) api.getSettings().then((s) => setCopilotDefault(!!s.live?.enabled)).catch(() => {});
+  }, [active]);
+
   // Attach the live engine once BOTH the audio stream and the recording id exist. The id can
   // land after the stream opens, so this runs order-independently (a plain recordingId on
   // audio.start would race and silently skip engaging the engine → no cards ever).
+  // Re-runs on `copilotOn` too: re-attaching with the flag is how the toggle reaches the
+  // backend session, which updates in place and keeps the copilot's conversation history.
   useEffect(() => {
-    if (liveStreamId && rec.recordingId) attachLive(liveStreamId, rec.recordingId);
-  }, [liveStreamId, rec.recordingId]);
+    if (liveStreamId && rec.recordingId) attachLive(liveStreamId, rec.recordingId, copilotOn);
+  }, [liveStreamId, rec.recordingId, copilotOn]);
 
   // In-meeting live context cards from the backend engine, scoped to this recording.
   // Cards belong to ONE recording, so clear on every id change — not just when the id goes
@@ -355,19 +372,32 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
           {/* left: the meeting copilot — what helps the user drive the meeting */}
           <div className="w-[280px] flex-none min-h-0 rounded-[14px] border border-border bg-card shadow-soft flex flex-col">
             <div className="flex items-center gap-1.5 px-4 pt-4 pb-2.5 flex-none border-b border-border-soft">
-              <Icon name="sparkle" size={13} color="var(--color-accent)" />
+              <Icon name="sparkle" size={13} color={copilotOn ? 'var(--color-accent)' : 'var(--color-ink3)'} />
               <span className="text-[11px] uppercase tracking-wider text-ink3 font-600 flex-1">Copilot</span>
-              {liveCards.length > 0 && <span className="text-[11px] text-ink3">{liveCards.length}</span>}
-              {liveStreamId && (
+              {copilotOn && liveCards.length > 0 && <span className="text-[11px] text-ink3">{liveCards.length}</span>}
+              {copilotOn && liveStreamId && (
                 <button type="button" onClick={refreshCopilot} disabled={refreshing}
                   title="Get fresh suggestions now"
                   className="text-ink3 hover:text-accent disabled:opacity-50 flex-none">
                   <span className={refreshing ? 'inline-block an-spin' : ''}><Icon name="refresh" size={13} /></span>
                 </button>
               )}
+              {/* Per-recording override of the app setting. Deliberately here rather than only in
+                  Settings: whether the copilot is worth its cost is a per-meeting judgement. */}
+              <button type="button" role="switch" aria-checked={copilotOn} aria-label="Live Copilot"
+                onClick={() => setCopilotOverride(!copilotOn)}
+                title={copilotOn ? 'Turn the copilot off for this recording' : 'Turn the copilot on for this recording'}
+                className={`relative w-[28px] h-[16px] rounded-full transition-colors flex-none ${copilotOn ? 'bg-accent' : 'bg-border'}`}>
+                <span className={`absolute top-0.5 w-[12px] h-[12px] rounded-full bg-white shadow transition-all ${copilotOn ? 'left-[14px]' : 'left-0.5'}`} />
+              </button>
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-3">
-              {liveCards.length > 0 ? (
+              {!copilotOn ? (
+                <div className="text-[12px] text-ink3 leading-relaxed px-1 pt-1">
+                  Copilot is off for this recording. Turn it on above to have an assistant follow
+                  the conversation and surface open loops, questions, and answers as they come up.
+                </div>
+              ) : liveCards.length > 0 ? (
                 <LiveCards cards={liveCards} onDismiss={dismissCard} />
               ) : (
                 <div className="text-[12px] text-ink3 leading-relaxed px-1 pt-1">

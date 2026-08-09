@@ -25,11 +25,15 @@ import { parseWaterfallData, ResponsiveWaterfall } from './WaterfallCodeBlockEdi
 import { parseSankeyData, ResponsiveSankey } from './SankeyCodeBlockEditor';
 import { parseKanbanData, KanbanBoard } from './KanbanCodeBlockEditor';
 import { parseApiSpec, ApiSpecBlock } from './ApiSpecCodeBlockEditor';
+import {
+  parseExcalidrawScene, ExcalidrawView,
+  readExcalidrawHeight, readExcalidrawAlign,
+} from './ExcalidrawCodeBlockEditor';
 
 /** Languages this module renders — used to decide whether to intercept a fenced block at all. */
 export const RICH_BLOCK_LANGUAGES = new Set([
   'tabs', 'calendar', 'chart', 'diffchart', 'timeline',
-  'mindmap', 'waterfall', 'sankey', 'kanban', 'api',
+  'mindmap', 'waterfall', 'sankey', 'kanban', 'api', 'excalidraw',
 ]);
 
 function BlockTitle({ title }: { title: string }) {
@@ -131,6 +135,21 @@ export function RichBlockView({ language, code, renderMarkdown, fallback = null 
       const spec = parseApiSpec(body);
       if (!spec) return fallback;
       return <Framed title={title}><ApiSpecBlock spec={spec} /></Framed>;
+    }
+    case 'excalidraw': {
+      // Sized/aligned from the directive, which lives on the ORIGINAL code — `body` has had the
+      // title stripped but the parser strips the directive itself.
+      const scene = parseExcalidrawScene(code);
+      if (!scene) return fallback;
+      return (
+        <Framed title={title}>
+          <ExcalidrawView
+            scene={scene}
+            height={readExcalidrawHeight(code)}
+            align={readExcalidrawAlign(code)}
+          />
+        </Framed>
+      );
     }
     default:
       return fallback;

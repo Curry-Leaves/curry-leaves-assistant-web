@@ -33,17 +33,19 @@ export function ProviderStep({ onNext, onSkip, onBack }: {
   const confirmed = useRef(CONFIRMED_MODELS);
 
   const refreshStatus = useCallback(async () => {
-    const [settings, status] = await Promise.all([
-      api.getSettings().catch(() => null),
+    const [cat, status] = await Promise.all([
+      api.providerCatalog().catch(() => null),
       api.providerStatus().catch(() => null),
     ]);
-    const cfgs = settings?.ai.providers || {};
+    // "Connected" here means connected AND switched on — the wizard's job is to leave the user
+    // with a provider that actually runs, and a disabled one doesn't. Taken from the catalog
+    // DTO rather than re-derived from raw settings, so this agrees with Settings and the backend.
     const next: Record<string, boolean> = {};
-    for (const [id, cfg] of Object.entries(cfgs)) {
-      if (cfg.apiKey) next[id] = true;
+    for (const spec of cat?.providers || []) {
+      if (spec.connected && spec.enabled) next[spec.id] = true;
     }
-    if (status?.copilot?.connected) next.copilot = true;
-    if (status?.codex?.connected) next.codex = true;
+    if (status?.copilot?.connected && status.copilot.enabled !== false) next.copilot = true;
+    if (status?.codex?.connected && status.codex.enabled !== false) next.codex = true;
     if (status?.ollama?.connected) next.ollama = true;
     setConnected(next);
     // A saved model only counts if the USER picked it. Several providers ship a default in
@@ -62,7 +64,10 @@ export function ProviderStep({ onNext, onSkip, onBack }: {
 
   // Connecting anything makes it the default provider, so the app is usable immediately.
   const finish = async (id: string) => {
-    try { await api.patchAiSettings({ active: id }); } catch { /* setup should never dead-end */ }
+    // Also switch it on: picking a provider here is an explicit "use this", and a default that
+    // was left disabled would fail on the very first run.
+    try { await api.patchAiSettings({ active: id, providers: { [id]: { enabled: true } } }); }
+    catch { /* setup should never dead-end */ }
     onNext();
   };
 
@@ -273,8 +278,9 @@ function KeyConnect({ spec, onBack, onReached }: {
     try {
       // Preview doubles as validation: it 400s on a bad key, so we never save one.
       const r = await api.previewModels(spec.id, key.trim(), spec.baseUrl);
-      // Save the key (not the model — that's the next stage's job).
-      await api.patchAiSettings({ providers: { [spec.id]: { apiKey: key.trim() } } });
+      // Save the key (not the model — that's the next stage's job). `enabled` goes with it so a
+      // provider the user had previously switched off comes back on when they reconnect it.
+      await api.patchAiSettings({ providers: { [spec.id]: { apiKey: key.trim(), enabled: true } } });
       onReached(r.models, r.default_model);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not connect.');
@@ -439,8 +445,18 @@ function CodexConnect({ spec, onBack, onReached }: {
   const [waiting, setWaiting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Codex ships no default OAuth client id, so check up front whether one is configured and
+  // explain what's needed instead of letting Sign in fail. Undefined = not yet known.
+  const [cfg, setCfg] = useState<{ configured: boolean; env?: string } | null>(null);
   const polling = useRef(false);
   useEffect(() => () => { polling.current = false; }, []);
+  useEffect(() => {
+    let live = true;
+    api.providerStatus()
+      .then((s) => { if (live) setCfg({ configured: s.codex?.configured !== false, env: s.codex?.clientIdEnv }); })
+      .catch(() => { if (live) setCfg({ configured: true }); });
+    return () => { live = false; };
+  }, []);
 
   const connect = async () => {
     setError(''); setBusy(true);
@@ -472,14 +488,26 @@ function CodexConnect({ spec, onBack, onReached }: {
     polling.current = false;
   };
 
+  const blocked = cfg !== null && !cfg.configured;
+
   return (
     <>
       <StepHead
         title="Sign in to ChatGPT"
-        hint={waiting
-          ? 'Finish signing in in the browser window we opened, then come back here.'
-          : "We'll open your browser to sign in. No API key needed."}
+        hint={blocked
+          ? 'Codex needs an OpenAI OAuth client ID before you can sign in.'
+          : waiting
+            ? 'Finish signing in in the browser window we opened, then come back here.'
+            : "We'll open your browser to sign in. No API key needed."}
       />
+      {blocked && (
+        <div className="mt-5 rounded-[8px] border border-rec/50 bg-rec/5 px-3.5 py-3 text-[11.5px] text-ink2 leading-relaxed">
+          <span className="font-550 text-ink">An OpenAI OAuth client ID is required.</span> Curry Leaves
+          doesn't ship one for Codex. Register your own OpenAI OAuth integration, then restart the app
+          with <span className="font-mono text-[11px]">{cfg?.env || 'CURRY_LEAVES_CODEX_CLIENT_ID'}</span> set
+          to its client ID. Or go back and pick <span className="font-550">OpenAI</span> to use an API key instead.
+        </div>
+      )}
       {waiting && (
         <div className="mt-6 flex items-center justify-center gap-2 text-[11.5px] text-ink3">
           <span className="inline-block w-3 h-3 rounded-full border-2 border-accent/30 border-t-accent an-spin" />
@@ -487,7 +515,7 @@ function CodexConnect({ spec, onBack, onReached }: {
         </div>
       )}
       {error && <div className="text-[11.5px] text-rec mt-2">{error}</div>}
-      <StepNav onNext={waiting ? undefined : connect} onBack={onBack} nextLabel="Sign in" busy={busy} />
+      <StepNav onNext={waiting || blocked ? undefined : connect} onBack={onBack} nextLabel="Sign in" busy={busy} />
     </>
   );
 }

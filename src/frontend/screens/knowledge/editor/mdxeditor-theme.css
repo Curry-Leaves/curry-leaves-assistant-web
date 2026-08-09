@@ -207,6 +207,29 @@
   font-size: 12px;   /* narrows the em basis the controls inherit */
 }
 
+/* Image alignment while editing.
+ *
+ * The alignment is stored on the node as `data-align` (that is what the markdown round-trip
+ * reads), but MDXEditor's ImageEditor forwards ONLY `class`/`className` from a node's extra
+ * attributes to the rendered <img> — everything else is kept for serialization and never reaches
+ * the DOM. So the toolbar also writes a `cl-img-<align>` class, which is what these rules hook.
+ *
+ * The editor wraps each image in a resize container, so the wrapper is what has to move; styling
+ * the <img> alone leaves it parked at the start of the line. `:has()` lets us align the wrapper
+ * from the class on its child, with no custom Lexical node — it is supported in every browser
+ * this app targets (Chromium/WebKit via the desktop shell, and modern Firefox). */
+.cl-mdx [contenteditable] [class*="imageWrapper"]:has(.cl-img-center) {
+  display: block;
+  margin-inline: auto;
+  width: fit-content;
+}
+.cl-mdx [contenteditable] [class*="imageWrapper"]:has(.cl-img-right) {
+  display: block;
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+  width: fit-content;
+}
+
 /* Icon glyphs — the big offender. Force to app scale in the toolbar AND in the
  * link/edit popovers (which portal into this root via overlayContainer). The
  * `:not([contenteditable] *)` guard leaves user-embedded content SVGs (diagrams,
@@ -326,3 +349,40 @@
 .cl-mdx [data-radix-popper-content-wrapper] {
   z-index: 40;
 }
+
+/* ── Column / row resizing (see useTableResize.ts) ──────────────────────────────
+ * The grab zones are pseudo-elements on the cells, NOT real nodes: MDXEditor mounts a
+ * nested editor inside every cell, so an extra child element there would be serialized
+ * into the note's markdown. `useTableResize` hit-tests by geometry and only uses these
+ * for the visual affordance, which is why they are pointer-events:none. */
+.cl-mdx [class*="tableEditor"] > tbody > tr > td:not([class*="toolCell"]),
+.cl-mdx [class*="tableEditor"] > tbody > tr > th:not([class*="toolCell"]):not([data-tool-cell='true']) {
+  position: relative;
+}
+.cl-mdx [class*="tableEditor"] > tbody > tr > td:not([class*="toolCell"])::after,
+.cl-mdx [class*="tableEditor"] > tbody > tr > th:not([class*="toolCell"]):not([data-tool-cell='true'])::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  pointer-events: none;
+  background: transparent;
+  transition: background 90ms ease-out;
+}
+/* Light up the whole column divider while the pointer is near it. */
+.cl-mdx[data-cl-resize='col'] [class*="tableEditor"] > tbody > tr > td:hover::after,
+.cl-mdx[data-cl-resize='col'] [class*="tableEditor"] > tbody > tr > th:hover::after {
+  background: var(--color-accent, #b4522e);
+}
+
+/* One cursor for the whole surface while a resize is live or available: the cells host
+ * their own contenteditables, which would otherwise show a text caret mid-drag. */
+.cl-mdx[data-cl-resize='col'],
+.cl-mdx[data-cl-resize='col'] * { cursor: col-resize !important; }
+.cl-mdx[data-cl-resize='row'],
+.cl-mdx[data-cl-resize='row'] * { cursor: row-resize !important; }
+
+/* A resized row must not be squeezed by the cell's own min-height rules. */
+.cl-mdx [class*="tableEditor"] > tbody > tr[style*="height"] > td { height: inherit; }

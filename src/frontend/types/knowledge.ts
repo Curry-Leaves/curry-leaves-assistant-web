@@ -68,6 +68,14 @@ export interface KnowledgeConflict {
   updated?: string | null;
 }
 
+// A stored image attachment. `path` is bundle-relative (`assets/2026-08-08-shot.png`) — it is
+// what goes in the markdown, so the link also resolves when the vault is opened elsewhere.
+export interface KnowledgeAsset {
+  path: string;
+  mime: string;
+  bytes: number;
+}
+
 // Result of feeding a document into the knowledge base.
 export interface KnowledgeIngestResult {
   ok: boolean;

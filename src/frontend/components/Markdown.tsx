@@ -1,3 +1,4 @@
+import { Children, cloneElement, isValidElement, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MermaidDiagram } from './MermaidDiagram';
@@ -5,7 +6,34 @@ import { CodeBlock } from './CodeBlock';
 import { SvgBlock, splitSvg } from './SvgBlock';
 import { DiagramSkeleton } from './DiagramSkeleton';
 import { healMarkdown } from './healMarkdown';
+import { NoteImage } from './NoteImage';
+import { htmlImagesToMarkdown } from './noteImages';
+import { remarkTableCellBreaks } from './tableCellBreaks';
+import { remarkTableSizes } from './tableSizeStyles';
 import { RichBlockView, RICH_BLOCK_LANGUAGES } from '../screens/knowledge/editor/blocks/BlockView';
+
+/** Stamp persisted heights onto a table's body rows.
+ *
+ * Applied by cloning rather than by CSS because a height has to land on the specific Nth
+ * <tr>, and the rows arrive as already-built elements from react-markdown. Only <tbody>
+ * rows are numbered — the header is not resizable — and a row with no recorded height keeps
+ * its natural grow-to-fit behavior, which is what in-cell line breaks depend on. */
+function withRowHeights(children: ReactNode, rows: number[]): ReactNode {
+  let row = 0;
+  return Children.map(children, (section) => {
+    if (!isValidElement(section) || section.type !== 'tbody') return section;
+    const body = section as React.ReactElement<{ children?: ReactNode }>;
+    return cloneElement(body, {
+      children: Children.map(body.props.children, (tr) => {
+        if (!isValidElement(tr)) return tr;
+        const h = rows[row++];
+        if (!h) return tr;
+        const el = tr as React.ReactElement<{ style?: React.CSSProperties }>;
+        return cloneElement(el, { style: { ...el.props.style, height: `${h}px` } });
+      }),
+    });
+  });
+}
 
 // GitHub-flavored markdown, styled to match the app surface. Shared by chat, the
 // knowledge viewer, and dashboard tiles so rendered markdown looks identical
@@ -25,7 +53,9 @@ const MD_COMPONENTS = {
   hr: () => <hr className="my-3 border-border" />,
   strong: (p: any) => <strong className="font-650" {...p} />,
   del: (p: any) => <del className="line-through text-ink3" {...p} />,
-  img: (p: any) => <img className="max-w-full rounded-[10px] border border-border my-2" loading="lazy" {...p} />,
+  // Attachments are stored bundle-relative (`assets/x.png`); NoteImage resolves those against
+  // the backend, since this page's origin generally isn't the backend's.
+  img: (p: any) => <NoteImage {...p} />,
   // GFM task lists: render the checkbox in the app accent, hide the list bullet
   input: (p: any) => p.type === 'checkbox'
     ? <input className="accent-accent mr-1.5 align-middle" disabled {...p} />
@@ -81,11 +111,39 @@ const MD_COMPONENTS = {
   },
   // Tables render as a rounded card: header band, hairline row dividers, zebra rows,
   // horizontal scroll when the grid outgrows its container.
-  table: (p: any) => (
-    <div className="my-2 overflow-x-auto rounded-[10px] border border-border">
-      <table className="w-full border-collapse text-[13px]" {...p} />
-    </div>
-  ),
+  // Column widths / row heights the editor persisted (see tableSizeStyles.ts) arrive as
+  // data-cl-cols / data-cl-rows. Widths need a real <colgroup> plus `table-layout: fixed`
+  // to take effect; without a marker the table keeps its natural auto layout.
+  table: ({ 'data-cl-cols': dataCols, 'data-cl-rows': dataRows, children, ...p }: any) => {
+    const nums = (v: unknown) => String(v ?? '').split(',').filter(Boolean).map(Number)
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const cols = nums(dataCols);
+    const rows = nums(dataRows);
+    // The card hugs a sized table (`w-fit`) instead of spanning the pane: with explicit widths
+    // the columns no longer fill the container, and a full-width border would frame a large
+    // empty area to the right of the last column. `max-w-full` keeps the scroll behavior for a
+    // table wider than the pane.
+    return (
+      <div className={`my-2 overflow-x-auto rounded-[10px] border border-border${
+        cols.length ? ' w-fit max-w-full' : ''}`}>
+        {/* `w-full` has to go when there are explicit widths: at width:100% the fixed layout
+            stretches the columns proportionally to fill the container and the saved pixel
+            widths are ignored (measured: 260px renders as 687px). `width:auto` + fixed layout
+            makes the <col> widths literal. Deliberately NO min-width:100% — that reintroduces
+            the same stretching; a narrow table simply stays narrow, as the user sized it. */}
+        <table
+          className={`border-collapse text-[13px] ${cols.length ? '' : 'w-full'}`}
+          style={cols.length ? { tableLayout: 'fixed', width: 'auto' } : undefined}
+          {...p}
+        >
+          {cols.length > 0 && (
+            <colgroup>{cols.map((w, i) => <col key={i} style={{ width: `${w}px` }} />)}</colgroup>
+          )}
+          {rows.length ? withRowHeights(children, rows) : children}
+        </table>
+      </div>
+    );
+  },
   thead: (p: any) => <thead className="bg-border-soft" {...p} />,
   tr: (p: any) => <tr className="even:bg-border-soft/30 [&:last-child>td]:border-b-0" {...p} />,
   th: (p: any) => <th className="px-3 py-1.5 text-left font-600 text-ink border-b border-border whitespace-nowrap" {...p} />,
@@ -208,7 +266,13 @@ export function Markdown({ text, onNavigate, textSize = 'text-[14px]', variant =
   // Pull top-level <svg>…</svg> blocks out of the text and render them as sanitized
   // inline images (react-markdown strips raw HTML), routing everything else through the
   // normal markdown pipeline. Most messages have no SVG → a single md chunk, no extra work.
-  const chunks = splitSvg(healed ? healed.text : text);
+  // Fold raw `<img …>` tags into markdown images before rendering. Resizing an image in the
+  // note editor makes MDXEditor serialize it as HTML (markdown has nowhere to put width and
+  // height), and we render without rehype-raw on purpose — so without this the reader sees the
+  // literal tag as escaped text instead of a picture. Dimensions survive as a `#w=…&h=…`
+  // fragment that NoteImage applies. Notes already on disk in the HTML form are fixed on read,
+  // so this repairs existing notes, not just newly-saved ones.
+  const chunks = splitSvg(htmlImagesToMarkdown(healed ? healed.text : text));
 
   return (
     <div className={`min-w-0 ${textSize} text-ink leading-relaxed [&>:first-child]:mt-0 [&>:last-child]:mb-0`}>
@@ -216,7 +280,7 @@ export function Markdown({ text, onNavigate, textSize = 'text-[14px]', variant =
         c.kind === 'svg' ? (
           <SvgBlock key={i} source={c.source} />
         ) : (
-          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={components}>{c.text}</ReactMarkdown>
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm, remarkTableCellBreaks, remarkTableSizes]} components={components}>{c.text}</ReactMarkdown>
         ),
       )}
     </div>
@@ -229,5 +293,5 @@ export function Markdown({ text, onNavigate, textSize = 'text-[14px]', variant =
 const INLINE_COMPONENTS = { ...MD_COMPONENTS, p: (p: any) => <span {...p} /> };
 
 export function InlineMarkdown({ text }: { text: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={INLINE_COMPONENTS}>{text}</ReactMarkdown>;
+  return <ReactMarkdown remarkPlugins={[remarkGfm, remarkTableCellBreaks, remarkTableSizes]} components={INLINE_COMPONENTS}>{text}</ReactMarkdown>;
 }

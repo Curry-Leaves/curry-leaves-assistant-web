@@ -14,7 +14,11 @@ import { api } from '../../../api/client';
 import { chatApi } from '../../../api/chat';
 import { subChat } from '../../../api/socket';
 
-export type AiScope = 'selection' | 'insert' | 'whole';
+// `element` targets ONE table / rich block / image by its markdown source. The other scopes work
+// from a rendered DOM selection, which is exactly what those constructs cannot provide: a table's
+// selection text doesn't match its `| a | b |` source, and a rich block's content never enters the
+// page selection at all (each is an isolated nested editor). See noteElements.ts.
+export type AiScope = 'selection' | 'insert' | 'whole' | 'element';
 
 export const NOTE_EDITOR_SURFACE = 'knowledge-editor';
 export const NOTE_EDITOR_AGENT = 'note-editor';
@@ -26,6 +30,10 @@ export interface AiRunArgs {
   sourceText: string;
   /** Full note body, sent as context so scoped edits fit their surroundings. */
   noteContext: string;
+  /** Earlier turns of this editing conversation, oldest first. The backend folds these into
+   *  the prompt for an ephemeral run (see chat_runs.py `start_run`), which is what lets a
+   *  follow-up like "now make it shorter" know what "it" refers to. Omit for a one-shot edit. */
+  history?: { role: string; content: string }[];
 }
 
 export interface AiRunResult {
@@ -76,6 +84,27 @@ function buildMessage({ scope, instruction, sourceText, noteContext }: AiRunArgs
       'Return the ENTIRE note with the change applied. Keep everything else — wording, headings,',
       'links, formatting, blank lines — byte-for-byte identical. Output only the note markdown,',
       'with no commentary and no code fence around it.',
+      '</task>',
+    ].join('\n');
+  }
+  if (scope === 'element') {
+    // Returns ONLY the element, not the whole note: the caller knows the element's exact
+    // character range and splices the reply back in, so there is nothing to locate and no risk
+    // of the model quietly rewriting the rest of the note. It also keeps the reply small
+    // enough to stream fast for a big table.
+    return [
+      '<instruction>', instr, '</instruction>',
+      '<element>', sourceText, '</element>',
+      '<note_context>', noteContext, '</note_context>',
+      '<task>',
+      'The <element> above is one element of the note (a markdown table, a fenced block, or an',
+      'image). Apply the change in <instruction> to it.',
+      '',
+      'Return ONLY the replacement markdown for that element — no surrounding prose, no',
+      'commentary, and no code fence around your answer UNLESS the element itself is a fenced',
+      'block, in which case keep its ``` fence and the same language tag.',
+      'Keep the same kind of element: a table stays a markdown table (same column count unless',
+      'asked otherwise), a kanban block stays kanban, an image stays an image.',
       '</task>',
     ].join('\n');
   }
@@ -133,6 +162,7 @@ export function useAiEdit(): UseAiEdit {
         agentId,
         message: buildMessage(args),
         ephemeral: true,
+        ...(args.history?.length ? { history: args.history } : {}),
       });
       runIdRef.current = runId;
 

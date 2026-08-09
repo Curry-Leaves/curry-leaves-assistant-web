@@ -47,7 +47,9 @@ export function AiStatusToast({ onOpenSettings }: { onOpenSettings: (sectionId: 
         </span>
         <div className="flex-1 min-w-0">
           <div className="text-[12.5px] font-600 text-ink">
-            {status.reason === 'no_model' ? 'No default model selected' : 'No AI provider connected'}
+            {status.reason === 'no_model' ? 'No default model selected'
+              : status.reason === 'provider_disabled' ? 'Your AI provider is turned off'
+              : 'No AI provider connected'}
           </div>
           <div className="text-[11.5px] text-ink2 leading-snug mt-0.5">
             {status.detail || 'Agents and chat can’t run until this is set up.'}

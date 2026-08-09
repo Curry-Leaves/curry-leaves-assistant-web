@@ -67,6 +67,35 @@ const SPECIAL_META: Record<string, { name: string; modelPh: string; hint: string
   ollama: { name: 'Ollama (local)', modelPh: 'llama3.1', hint: 'Runs models locally via Ollama — no API key, nothing leaves your machine. Install from ollama.com and `ollama pull` a model.' },
 };
 
+/** The per-provider on/off switch, shown on every connected card.
+ *
+ *  Distinct from Disconnect: disabling parks a provider without touching its credentials, so
+ *  switching it back on is one click rather than pasting a key or redoing an OAuth flow. A
+ *  disabled provider is excluded from the agent/chat pickers and refused at run time, so this
+ *  is the switch that actually stops a provider being used. */
+function EnableSwitch({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none" title={enabled ? 'Turn this provider off — agents and chat stop using it, but its connection is kept' : 'Turn this provider back on'}>
+      <button type="button" role="switch" aria-checked={enabled} aria-label="Provider enabled"
+        onClick={() => onChange(!enabled)}
+        className={`relative w-[30px] h-[17px] rounded-full transition-colors flex-none ${enabled ? 'bg-accent' : 'bg-border'}`}>
+        <span className={`absolute top-0.5 w-[13px] h-[13px] rounded-full bg-white shadow transition-all ${enabled ? 'left-[15px]' : 'left-0.5'}`} />
+      </button>
+      <span className="text-[11.5px] text-ink3">{enabled ? 'On' : 'Off'}</span>
+    </label>
+  );
+}
+
+/** The "connected but switched off" notice, shown in place of a disabled card's controls. */
+function DisabledNote({ name }: { name: string }) {
+  return (
+    <div className="text-[11.5px] text-ink3 leading-relaxed">
+      {name} is connected but turned off — agents and chat won't use it, and it's hidden from the
+      model pickers. Switch it back on above to use it again.
+    </div>
+  );
+}
+
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
   const [show, setShow] = useState(false);
   return (
@@ -89,14 +118,16 @@ function SecretInput({ value, onChange, placeholder }: { value: string; onChange
  *  the OAuth cards: NOT connected → key field + "Connect" (saves the key AND pulls the live
  *  model list); connected → Connected badge + Disconnect, model dropdown from the pulled
  *  catalog, and effort tiers. Fully spec-driven — no hardcoded provider knowledge. */
-function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove }: {
+function ProviderCard({ spec, cfg, active, enabled, onSave, onUse, onDisconnect, onRemove, onToggle }: {
   spec: ProviderSpecDto;
   cfg: { apiKey?: string; model?: string; baseUrl?: string; tiers?: AiModelTiers };
   active: boolean;
-  onSave: (next: { apiKey?: string; model?: string; tiers?: AiModelTiers }) => Promise<void>;
+  enabled: boolean;
+  onSave: (next: { apiKey?: string; model?: string; tiers?: AiModelTiers; enabled?: boolean }) => Promise<void>;
   onUse: () => void;
   onDisconnect: () => Promise<void>;
   onRemove?: () => Promise<void>;  // custom providers only — delete the card entirely
+  onToggle: (v: boolean) => Promise<void>;
 }) {
   const [apiKey, setApiKey] = useState('');
   const [models, setModels] = useState<{ id: string }[]>([]);
@@ -110,9 +141,11 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
   const baseUrl = spec.custom ? (cfg.baseUrl || spec.baseUrl) : spec.baseUrl;
   const connected = !!cfg.apiKey;
 
-  // Once connected, pull the provider's live catalog (falls back to a curated list server-side).
+  // Once connected AND enabled, pull the provider's live catalog (falls back to a curated list
+  // server-side). A disabled provider's /providers/models returns an empty catalog, so skip the
+  // round trip rather than rendering an empty dropdown behind the disabled notice.
   useEffect(() => {
-    if (!connected) { setModels([]); setDefaultModel(''); return; }
+    if (!connected || !enabled) { setModels([]); setDefaultModel(''); return; }
     let alive = true;
     setLoadingModels(true);
     api.providerModels(spec.id)
@@ -120,7 +153,7 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
       .catch(() => { if (alive) setModels([]); })
       .finally(() => { if (alive) setLoadingModels(false); });
     return () => { alive = false; };
-  }, [spec.id, connected]);
+  }, [spec.id, connected, enabled]);
 
   // Connect = persist the key AND pull models. One click connects.
   const connect = async () => {
@@ -131,7 +164,9 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
       // Validate + pull before persisting, so a bad key surfaces here rather than silently
       // saving a dead connection.
       const r = await api.previewModels(spec.id, key, baseUrl);
-      await onSave({ apiKey: key });
+      // `enabled` rides along: reconnecting a provider the user had switched off means they
+      // want it back, and landing on a connected-but-off card would just be confusing.
+      await onSave({ apiKey: key, enabled: true });
       setModels(r.models); setDefaultModel(r.default_model || '');
       setApiKey('');
     } catch (e) {
@@ -146,14 +181,14 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
   const isCustom = custom || (!!model && models.length > 0 && !models.some((m) => m.id === model));
 
   return (
-    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'}`}>
+    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'} ${connected && !enabled ? 'opacity-70' : ''}`}>
       <div className="flex items-center gap-2.5 mb-3">
-        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-ok' : 'bg-ink3'}`} />
+        <span className={`w-2 h-2 rounded-full ${connected && enabled ? 'bg-ok' : 'bg-ink3'}`} />
         <span className="text-[14px] font-550 text-ink flex-1">{spec.name}{spec.custom && <span className="ml-1.5 text-[10px] font-500 text-ink3">custom</span>}</span>
         {active ? (
           <span className="text-[10px] font-600 text-white bg-accent px-2 py-0.5 rounded-full">default</span>
         ) : (
-          <button type="button" onClick={onUse} disabled={!connected}
+          <button type="button" onClick={onUse} disabled={!connected || !enabled}
             className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 disabled:opacity-40">
             Set as default
           </button>
@@ -164,9 +199,13 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
       {connected ? (
         <div className="flex flex-col gap-2.5">
           <div className="flex items-center gap-3 text-[12.5px] text-ink2">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-ok" />Connected · {models.length} model{models.length === 1 ? '' : 's'}</span>
-            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3">Disconnect</button>
+            <span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${enabled ? 'bg-ok' : 'bg-ink3'}`} />
+              {enabled ? `Connected · ${models.length} model${models.length === 1 ? '' : 's'}` : 'Connected · off'}</span>
+            <EnableSwitch enabled={enabled} onChange={onToggle} />
+            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 ml-auto">Disconnect</button>
           </div>
+          {!enabled && <DisabledNote name={spec.name} />}
+          {enabled && <>
           <label className="flex items-center gap-3">
             <span className="text-[12px] text-ink2 w-[80px]">Model</span>
             {/* Populated from the catalog pulled at connect. Custom… → free-text escape hatch. */}
@@ -196,6 +235,7 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
               <TierPicker tiers={cfg.tiers || {}} models={models} onSave={(tiers) => onSave({ tiers })} />
             </div>
           )}
+          </>}
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
@@ -219,9 +259,10 @@ function ProviderCard({ spec, cfg, active, onSave, onUse, onDisconnect, onRemove
   );
 }
 
-function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave }: {
-  active: boolean; connected: boolean; models: { id: string }[]; cfg: { model?: string; clientId?: string; headers?: Record<string, string>; tiers?: AiModelTiers };
+function CopilotCard({ active, connected, enabled, models, cfg, onUse, onChanged, onSave, onToggle }: {
+  active: boolean; connected: boolean; enabled: boolean; models: { id: string }[]; cfg: { model?: string; clientId?: string; headers?: Record<string, string>; tiers?: AiModelTiers };
   onUse: () => void; onChanged: () => void; onSave: (next: { model?: string; clientId?: string; headers?: Record<string, string>; tiers?: AiModelTiers }) => Promise<void>;
+  onToggle: (v: boolean) => Promise<void>;
 }) {
   const p = SPECIAL_META.copilot;
   const [device, setDevice] = useState<{ user_code: string; verification_uri: string } | null>(null);
@@ -281,14 +322,14 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
   const disconnect = async () => { polling.current = false; await api.copilotDisconnect().catch(() => {}); onChanged(); };
 
   return (
-    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'}`}>
+    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'} ${connected && !enabled ? 'opacity-70' : ''}`}>
       <div className="flex items-center gap-2.5 mb-3">
-        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-ok' : 'bg-ink3'}`} />
+        <span className={`w-2 h-2 rounded-full ${connected && enabled ? 'bg-ok' : 'bg-ink3'}`} />
         <span className="text-[14px] font-550 text-ink flex-1">{p.name}</span>
         {active ? (
           <span className="text-[10px] font-600 text-white bg-accent px-2 py-0.5 rounded-full">default</span>
         ) : (
-          <button type="button" onClick={onUse} disabled={!connected}
+          <button type="button" onClick={onUse} disabled={!connected || !enabled}
             className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 disabled:opacity-40">
             Set as default
           </button>
@@ -299,9 +340,13 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
       {connected ? (
         <div className="flex flex-col gap-2.5">
           <div className="flex items-center gap-3 text-[12.5px] text-ink2">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-ok" />Connected · {models.length} model{models.length === 1 ? '' : 's'}</span>
-            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3">Disconnect</button>
+            <span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${enabled ? 'bg-ok' : 'bg-ink3'}`} />
+              {enabled ? `Connected · ${models.length} model${models.length === 1 ? '' : 's'}` : 'Connected · off'}</span>
+            <EnableSwitch enabled={enabled} onChange={onToggle} />
+            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 ml-auto">Disconnect</button>
           </div>
+          {!enabled && <DisabledNote name={p.name} />}
+          {enabled && <>
           <label className="flex items-center gap-3">
             <span className="text-[12px] text-ink2 w-[80px]">Model</span>
             {/* Populated from the pulled catalog. Custom… → free-text escape hatch for a model
@@ -332,6 +377,7 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
             <div className="text-[11px] text-ink3 mb-2">Effort tiers <span className="text-ink3/70">— optional model overrides other features can pick from</span></div>
             <TierPicker tiers={cfg.tiers || {}} models={models} onSave={(tiers) => onSave({ tiers })} />
           </div>
+          </>}
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
@@ -340,6 +386,10 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
               className="h-[30px] px-3 rounded-[6px] bg-accent text-white text-[12px] font-550 inline-flex items-center gap-1.5 disabled:opacity-60">
               <Icon name="sparkle" size={13} /> {connecting ? 'Waiting for authorization…' : 'Connect GitHub Copilot'}
             </button>
+          </div>
+          <div className="text-[11px] text-ink3 leading-relaxed">
+            Signs in with the built-in Curry Leaves GitHub app — no client ID needed. To use your own
+            registered OAuth app instead, set its client ID under <span className="font-550">Advanced</span> before connecting.
           </div>
           {/* Advanced: override the GitHub OAuth client id used at connect. Default ("") is our own
               registered app, which is granted the GA model set. A user who understands the trade-off
@@ -360,8 +410,10 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
                 </label>
                 <p className="text-[11px] text-ink3 leading-relaxed">
                   Overrides the GitHub OAuth client id used to sign in. Leave blank to use the Curry
-                  Leaves app (recommended). Changing it affects what models GitHub grants your account
-                  and is your responsibility under GitHub's terms. Takes effect on the next connect.
+                  Leaves app, which is granted the GA model set — supply your own registered GitHub
+                  OAuth app's client ID if you need a different model catalog. Changing it affects what
+                  models GitHub grants your account and is your responsibility under GitHub's terms.
+                  Takes effect on the next connect.
                 </p>
                 <label className="flex items-start gap-3 mt-1">
                   <span className="text-[12px] text-ink2 w-[80px] flex-none pt-1.5">Headers</span>
@@ -395,9 +447,11 @@ function CopilotCard({ active, connected, models, cfg, onUse, onChanged, onSave 
   );
 }
 
-function CodexCard({ active, connected, models, cfg, onUse, onChanged, onSave }: {
-  active: boolean; connected: boolean; models: { id: string }[]; cfg: { model?: string; tiers?: AiModelTiers };
+function CodexCard({ active, connected, configured, clientIdEnv, enabled, models, cfg, onUse, onChanged, onSave, onToggle }: {
+  active: boolean; connected: boolean; configured: boolean; clientIdEnv?: string;
+  enabled: boolean; models: { id: string }[]; cfg: { model?: string; tiers?: AiModelTiers };
   onUse: () => void; onChanged: () => void; onSave: (next: { model?: string; tiers?: AiModelTiers }) => Promise<void>;
+  onToggle: (v: boolean) => Promise<void>;
 }) {
   const p = SPECIAL_META.codex;
   const [connecting, setConnecting] = useState(false);
@@ -432,14 +486,14 @@ function CodexCard({ active, connected, models, cfg, onUse, onChanged, onSave }:
   const disconnect = async () => { polling.current = false; await api.codexDisconnect().catch(() => {}); onChanged(); };
 
   return (
-    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'}`}>
+    <div className={`rounded-[10px] border p-4 h-full ${active ? 'border-accent bg-accent-soft/30' : 'border-border bg-card'} ${connected && !enabled ? 'opacity-70' : ''}`}>
       <div className="flex items-center gap-2.5 mb-3">
-        <span className={`w-2 h-2 rounded-full ${connected ? 'bg-ok' : 'bg-ink3'}`} />
+        <span className={`w-2 h-2 rounded-full ${connected && enabled ? 'bg-ok' : 'bg-ink3'}`} />
         <span className="text-[14px] font-550 text-ink flex-1">{p.name}</span>
         {active ? (
           <span className="text-[10px] font-600 text-white bg-accent px-2 py-0.5 rounded-full">default</span>
         ) : (
-          <button type="button" onClick={onUse} disabled={!connected}
+          <button type="button" onClick={onUse} disabled={!connected || !enabled}
             className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 disabled:opacity-40">
             Set as default
           </button>
@@ -450,9 +504,13 @@ function CodexCard({ active, connected, models, cfg, onUse, onChanged, onSave }:
       {connected ? (
         <div className="flex flex-col gap-2.5">
           <div className="flex items-center gap-3 text-[12.5px] text-ink2">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-ok" />Connected · {models.length} model{models.length === 1 ? '' : 's'}</span>
-            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3">Disconnect</button>
+            <span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${enabled ? 'bg-ok' : 'bg-ink3'}`} />
+              {enabled ? `Connected · ${models.length} model${models.length === 1 ? '' : 's'}` : 'Connected · off'}</span>
+            <EnableSwitch enabled={enabled} onChange={onToggle} />
+            <button type="button" onClick={disconnect} className="text-[11.5px] px-2.5 py-1 rounded-[6px] border border-border text-ink2 hover:border-ink3 ml-auto">Disconnect</button>
           </div>
+          {!enabled && <DisabledNote name={p.name} />}
+          {enabled && <>
           <label className="flex items-center gap-3">
             <span className="text-[12px] text-ink2 w-[80px]">Model</span>
             <div className="relative flex-1 min-w-0">
@@ -471,11 +529,23 @@ function CodexCard({ active, connected, models, cfg, onUse, onChanged, onSave }:
             <div className="text-[11px] text-ink3 mb-2">Effort tiers <span className="text-ink3/70">— optional model overrides other features can pick from</span></div>
             <TierPicker tiers={cfg.tiers || {}} models={models} onSave={(tiers) => onSave({ tiers })} />
           </div>
+          </>}
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
+          {/* Codex ships no default OAuth client id, so sign-in is impossible until the user
+              registers their own OpenAI integration and exports it. Say that here rather than
+              letting them click Connect and read a failure. */}
+          {!configured && (
+            <div className="rounded-[8px] border border-rec/50 bg-rec/5 px-3 py-2.5 text-[11.5px] text-ink2 leading-relaxed">
+              <span className="font-550 text-ink">An OpenAI OAuth client ID is required.</span> Curry
+              Leaves doesn't ship one for Codex. Register your own OpenAI OAuth integration, then start
+              the app with <span className="font-mono text-[11px]">{clientIdEnv || 'CURRY_LEAVES_CODEX_CLIENT_ID'}</span> set
+              to its client ID. Prefer no setup? Use the <span className="font-550">OpenAI</span> provider with an API key instead.
+            </div>
+          )}
           <div>
-            <button type="button" onClick={connect} disabled={connecting}
+            <button type="button" onClick={connect} disabled={connecting || !configured}
               className="h-[30px] px-3 rounded-[6px] bg-accent text-white text-[12px] font-550 inline-flex items-center gap-1.5 disabled:opacity-60">
               <Icon name="sparkle" size={13} /> {connecting ? 'Waiting for authorization…' : 'Sign in with ChatGPT'}
             </button>
@@ -649,7 +719,7 @@ export function AiProviders() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [catalog, setCatalog] = useState<ProviderSpecDto[]>([]);
   const [copilot, setCopilot] = useState<{ connected: boolean; models: { id: string }[] }>({ connected: false, models: [] });
-  const [codex, setCodex] = useState<{ connected: boolean; models: { id: string }[] }>({ connected: false, models: [] });
+  const [codex, setCodex] = useState<{ connected: boolean; configured?: boolean; clientIdEnv?: string; models: { id: string }[] }>({ connected: false, models: [] });
   const [ollama, setOllama] = useState<{ connected: boolean; models: { id: string }[]; host: string }>({ connected: false, models: [], host: 'http://localhost:11434' });
 
   const load = () => {
@@ -701,11 +771,29 @@ export function AiProviders() {
     load();
   };
 
+  // Connectedness for the two live-probe providers comes from /providers/status (it re-probes
+  // on every load); everything else is answered by the catalog DTO, which computes it with the
+  // same helper a real run uses. `enabled` is always the DTO's — one source of truth.
+  const specById = new Map(catalog.map((s) => [s.id, s]));
   const isConnected = (id: string) => {
     if (id === 'copilot') return copilot.connected;
     if (id === 'codex') return codex.connected;
     if (id === 'ollama') return ollama.connected;
-    return !!providers[id]?.apiKey;
+    return !!specById.get(id)?.connected;
+  };
+  const isEnabled = (id: string) => specById.get(id)?.enabled !== false;
+  // Usable = connected AND switched on. This is what "Set as default" and the auto-pick below
+  // mean by available, and it mirrors the backend's usable-catalog filter.
+  const isUsable = (id: string) => isConnected(id) && isEnabled(id);
+  // Flip a provider's on/off switch. Turning off the current default also clears `active` —
+  // leaving a disabled provider as the default would just make every run fail with
+  // "the default provider is turned off" until the user noticed.
+  const setEnabled = async (id: string, v: boolean) => {
+    await api.patchAiSettings({
+      providers: { [id]: { enabled: v } },
+      ...(!v && active === id ? { active: '' } : {}),
+    });
+    load();
   };
 
   // Auto-pick the default: if the user has connected exactly one provider and hasn't set a
@@ -713,14 +801,17 @@ export function AiProviders() {
   // obvious single-provider case. Only fires when `active` is empty — once anything is the
   // default (including this auto-set one) it never overrides the user's explicit choice, and
   // the `!active` guard also stops the setActive → load → re-render loop from re-firing.
-  const connectedIds = catalog.map((s) => s.id).filter(isConnected);
+  // Only a USABLE provider can be auto-picked — auto-selecting a disabled one would set a
+  // default that can't run.
+  const usableIds = catalog.map((s) => s.id).filter(isUsable);
   useEffect(() => {
-    if (settings && !active && connectedIds.length === 1) setActive(connectedIds[0]);
+    if (settings && !active && usableIds.length === 1) setActive(usableIds[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, active, connectedIds.join(',')]);
-  // Connected providers first (default provider leads), then the rest in catalog order.
-  // Rank + stable index tiebreaker = a total order, so cards never shuffle ambiguously.
-  const rank = (id: string) => (id === active ? 0 : isConnected(id) ? 1 : 2);
+  }, [settings, active, usableIds.join(',')]);
+  // Usable providers first (default provider leads), then connected-but-off, then the rest in
+  // catalog order. Rank + stable index tiebreaker = a total order, so cards never shuffle
+  // ambiguously. Disabled cards sit below the working ones but stay visible to be switched on.
+  const rank = (id: string) => (id === active ? 0 : isUsable(id) ? 1 : isConnected(id) ? 2 : 3);
   const sorted = catalog
     .map((spec, i) => ({ spec, i }))
     .sort((a, b) => rank(a.spec.id) - rank(b.spec.id) || a.i - b.i)
@@ -737,13 +828,18 @@ export function AiProviders() {
             <div className="grid grid-cols-2 gap-4 items-stretch">
               {sorted.map((spec) =>
                 spec.id === 'copilot' ? (
-                  <CopilotCard key={spec.id} active={active === 'copilot'} connected={copilot.connected} models={copilot.models}
+                  <CopilotCard key={spec.id} active={active === 'copilot'} connected={copilot.connected}
+                    enabled={isEnabled('copilot')} models={copilot.models}
                     cfg={providers.copilot || {}} onUse={() => setActive('copilot')} onChanged={load}
-                    onSave={(next) => saveProvider('copilot', next)} />
+                    onSave={(next) => saveProvider('copilot', next)}
+                    onToggle={(v) => setEnabled('copilot', v)} />
                 ) : spec.id === 'codex' ? (
-                  <CodexCard key={spec.id} active={active === 'codex'} connected={codex.connected} models={codex.models}
+                  <CodexCard key={spec.id} active={active === 'codex'} connected={codex.connected}
+                    configured={codex.configured !== false} clientIdEnv={codex.clientIdEnv}
+                    enabled={isEnabled('codex')} models={codex.models}
                     cfg={providers.codex || {}} onUse={() => setActive('codex')} onChanged={load}
-                    onSave={(next) => saveProvider('codex', next)} />
+                    onSave={(next) => saveProvider('codex', next)}
+                    onToggle={(v) => setEnabled('codex', v)} />
                 ) : spec.id === 'ollama' ? (
                   <OllamaCard key={spec.id} cfg={providers.ollama || {}} active={active === 'ollama'} connected={ollama.connected}
                     models={ollama.models} host={ollama.host}
@@ -751,9 +847,11 @@ export function AiProviders() {
                     onDisconnect={disconnectOllama} />
                 ) : (
                   <ProviderCard key={spec.id} spec={spec} cfg={providers[spec.id] || {}} active={active === spec.id}
+                    enabled={isEnabled(spec.id)}
                     onSave={(next) => saveProvider(spec.id, next)} onUse={() => setActive(spec.id)}
                     onDisconnect={() => disconnectProvider(spec.id)}
-                    onRemove={spec.custom ? () => removeCustom(spec.id) : undefined} />
+                    onRemove={spec.custom ? () => removeCustom(spec.id) : undefined}
+                    onToggle={(v) => setEnabled(spec.id, v)} />
                 ),
               )}
               <AddCustomProvider onAdd={addCustom} />

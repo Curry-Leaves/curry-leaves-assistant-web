@@ -171,6 +171,9 @@ export function NoteEditor({ path, graph, onChanged, onClosed, onNavigate }: {
   const [error, setError] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(true);
   const [propsOpen, setPropsOpen] = useState(true);
+  // The AI conversation rail. Starts closed: it is a deliberate mode, and opening it by
+  // default would narrow the writing surface for everyone who just wants to type.
+  const [aiOpen, setAiOpen] = useState(false);
   const [history, setHistory] = useState<KnowledgeHistoryEntry[]>([]);
   const [links, setLinks] = useState<{ outbound: { path: string; title: string }[]; inbound: { path: string; title: string }[] }>({ outbound: [], inbound: [] });
   const [prov, setProv] = useState<KnowledgeProvenanceEntry[]>([]);
@@ -286,6 +289,15 @@ export function NoteEditor({ path, graph, onChanged, onClosed, onNavigate }: {
             ))}
           </div>
           {mode === 'edit' && (
+            <button type="button" onClick={() => setAiOpen((o) => !o)}
+              title={aiOpen ? 'Hide the AI conversation' : 'Ask AI to change this note'}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-[7px] border text-[12px] font-550 ${aiOpen
+                ? 'border-accent-soft bg-accent-soft/30 text-accent-dark'
+                : 'border-transparent text-ink3 hover:text-ink hover:bg-border-soft'}`}>
+              <Icon name="sparkle" size={13} />AI
+            </button>
+          )}
+          {mode === 'edit' && (
             <button type="button" onClick={() => setPropsOpen((o) => !o)} title={propsOpen ? 'Hide properties' : 'Show properties'}
               className={`p-1.5 rounded-[7px] border ${propsOpen
                 ? 'border-accent-soft bg-accent-soft/30 text-accent-dark'
@@ -323,7 +335,10 @@ export function NoteEditor({ path, graph, onChanged, onClosed, onNavigate }: {
       {mode === 'view' && (
         <div className="flex-1 min-h-0 flex">
           <div className="flex-1 min-w-0 overflow-y-auto px-8 py-5">
-            <div className="max-w-[720px]">
+            {/* No max-width: the body fills the pane. A fixed reading measure here
+                (previously 720px) wrapped mid-pane and left the rest of a wide
+                window empty, which reads as a rendering bug rather than typography. */}
+            <div className="w-full">
               {conflicted && (
                 <div className="mb-4 rounded-[9px] border border-rec/40 bg-rec/5 px-3.5 py-2.5 text-[12px] text-ink2">
                   <span className="font-600 text-rec">⚠️ Unresolved conflict.</span> This note holds
@@ -357,7 +372,10 @@ export function NoteEditor({ path, graph, onChanged, onClosed, onNavigate }: {
         </div>
       )}
       {mode === 'edit' && (
-        <div className="flex-1 min-h-0 flex bg-card" onKeyDown={onKeyDown}>
+        // `data-cl-edit-area` marks the editor+rails row: the AI diff overlay measures it so
+        // a review can span the Properties rail too, which is a sibling of the editor and
+        // therefore outside the editor's own box.
+        <div data-cl-edit-area="" className="flex-1 min-h-0 flex bg-card" onKeyDown={onKeyDown}>
           {/* main column — WYSIWYG body editor with AI editing. Frontmatter lives in
               the Properties rail on the right, not inline, so the writing surface is
               clean and reads like a document. `min-h-0` + `overflow-hidden` are load-
@@ -369,6 +387,8 @@ export function NoteEditor({ path, graph, onChanged, onClosed, onNavigate }: {
               key={path}
               body={body}
               autoFocus
+              aiPanelOpen={aiOpen}
+              onAiPanelOpenChange={setAiOpen}
               onChange={(nextBody) => setDraft(joinNote(buildFm(fmEntries), nextBody))}
             />
           </div>

@@ -2,9 +2,9 @@
 import type {
   KnowledgeNote, KnowledgeNoteDetail, KnowledgeHit, KnowledgeGraph, KnowledgeHistoryEntry,
   KnowledgeProvenance, KnowledgeConflict, KnowledgeGardenerReport, KnowledgeHealthReport,
-  KnowledgeIngestResult, KnowledgeIngestStatus, EmbeddingsStatus,
+  KnowledgeIngestResult, KnowledgeIngestStatus, EmbeddingsStatus, KnowledgeAsset,
 } from '../types';
-import { authHeader } from '../auth';
+import { authHeader, getToken } from '../auth';
 import { base, j } from './http';
 
 export const knowledgeApi = {
@@ -64,5 +64,30 @@ export const knowledgeApi = {
     });
     if (!res.ok) throw new Error(res.status === 400 ? await res.text() : `/knowledge/ingest/file → ${res.status}`);
     return res.json();
+  },
+
+  /** Store an image (paste/drop/picker) in the bundle. Returns the bundle-relative path
+   *  to write into the note as `![alt](assets/…)`. Raw body — the editor already holds
+   *  a Blob, so multipart would only add encoding on both ends. */
+  uploadKnowledgeAsset: async (filename: string, data: ArrayBuffer): Promise<KnowledgeAsset> => {
+    const res = await fetch((await base()) + `/knowledge/asset?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream', ...authHeader() }, body: data,
+    });
+    // 400 carries the reason (unsupported type, too large) as plain text — surface it verbatim
+    // so the editor can tell the user WHY the paste didn't stick.
+    if (!res.ok) throw new Error(res.status === 400 ? await res.text() : `/knowledge/asset → ${res.status}`);
+    return res.json();
+  },
+
+  /** Absolute URL for a stored asset, for `<img src>`.
+   *
+   * The token rides as a query param because a browser image request cannot carry an
+   * Authorization header — the same reason SSE and the WebSocket do it (see
+   * `core/auth.token_from_request`). Async because the backend base is resolved at runtime
+   * (the desktop shell hands it over on boot). */
+  knowledgeAssetUrl: async (path: string): Promise<string> => {
+    const token = getToken();
+    const q = `path=${encodeURIComponent(path)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+    return (await base()) + `/knowledge/asset?${q}`;
   },
 };

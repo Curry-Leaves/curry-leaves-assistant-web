@@ -6,6 +6,7 @@ import { AiProviders } from './Providers';
 import { ThemePicker } from './ThemePicker';
 import { RecordingModels } from './RecordingModels';
 import { WakeWord } from './WakeWord';
+import { LiveCopilot } from './LiveCopilot';
 import { Knowledge } from './Knowledge';
 import { Identity } from './Identity';
 import { MeetingTemplates } from './MeetingTemplates';
@@ -24,13 +25,14 @@ import { useVerboseChat } from '../../prefs';
 //   • "Agents" was a bare enable/disable list duplicating the toggle already on each
 //     assistant's profile (AgentForm) and the enabled/disabled filter in AgentsScreen.
 //     Assistant management lives in the Assistants tab; Settings no longer mirrors it.
-type SectionId = 'general' | 'identity' | 'shortcuts' | 'ai' | 'recording' | 'wakeword' | 'knowledge' | 'templates' | 'backup';
+type SectionId = 'general' | 'identity' | 'shortcuts' | 'ai' | 'recording' | 'wakeword' | 'livecopilot' | 'knowledge' | 'templates' | 'backup';
 const SECTIONS: { id: SectionId; label: string; icon: string; group: string }[] = [
   { id: 'general', label: 'General', icon: 'settings', group: 'App' },
   { id: 'identity', label: 'Identity', icon: 'user', group: 'App' },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: 'keyboard', group: 'App' },
   { id: 'recording', label: 'Recording', icon: 'mic', group: 'Capture' },
   { id: 'wakeword', label: 'Wake word', icon: 'headphones', group: 'Capture' },
+  { id: 'livecopilot', label: 'Live Copilot', icon: 'sparkle', group: 'Capture' },
   { id: 'templates', label: 'Meeting templates', icon: 'chat', group: 'Capture' },
   { id: 'knowledge', label: 'Knowledge', icon: 'library', group: 'System' },
   { id: 'ai', label: 'AI providers', icon: 'sparkle', group: 'System' },
@@ -151,6 +153,7 @@ export function SettingsScreen({ initialSection, onSectionHandled }: {
 
         {section === 'recording' && <RecordingModels />}
         {section === 'wakeword' && <WakeWord />}
+        {section === 'livecopilot' && <LiveCopilot />}
         {section === 'knowledge' && <Knowledge />}
 
         {section === 'templates' && <MeetingTemplates />}

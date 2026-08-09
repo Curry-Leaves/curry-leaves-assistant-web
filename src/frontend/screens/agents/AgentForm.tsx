@@ -107,9 +107,11 @@ export function AgentForm({ agent, isNew, onSaved, onDeleted }: {
   useEffect(() => {
     api.agentOptions().then(setOpts).catch(() => {});
     api.listAgents().then(setAllAgents).catch(() => {});
-    // Provider dropdown from the live catalog (built-in registry + custom endpoints), so it
-    // always matches what's in Settings → AI providers. "Default" stays pinned first.
-    api.providerCatalog()
+    // Provider dropdown from the live catalog, narrowed to providers that are connected AND
+    // switched on — pinning an assistant to anything else just makes its runs fail. An existing
+    // pin that has since been disabled is still rendered (see the fallback <option> below), so
+    // opening the form doesn't silently drop it. "Default" stays pinned first.
+    api.providerCatalog(true)
       .then((c) => setProviderOpts([DEFAULT_PROVIDER_OPT, ...c.providers.map((p) => ({ id: p.id, name: p.name }))]))
       .catch(() => {});
   }, []);
@@ -262,14 +264,16 @@ export function AgentForm({ agent, isNew, onSaved, onDeleted }: {
 
         {tab === 'brain' && (
         <>
-          <Field label="Provider" hint="Which provider runs this assistant. Default follows Settings.">
+          <Field label="Provider" hint="Which provider runs this assistant. Default follows Settings. Only providers that are connected and switched on are listed.">
             <div className="relative w-full max-w-[360px]">
               <select value={provider} onChange={(e) => setProvider(e.target.value)} title="Provider"
-                onMouseDown={() => api.providerCatalog()
+                onMouseDown={() => api.providerCatalog(true)
                   .then((c) => setProviderOpts([DEFAULT_PROVIDER_OPT, ...c.providers.map((p) => ({ id: p.id, name: p.name }))]))
                   .catch(() => {})}
                 className={`w-full appearance-none pr-8 cursor-pointer ${FIELD_CLS}`}>
-                {provider && !providerOpts.some((p) => p.id === provider) && <option value={provider}>{provider}</option>}
+                {/* A pin that's no longer usable (provider disconnected or switched off) stays
+                    selectable so opening this form doesn't silently reset the assistant. */}
+                {provider && !providerOpts.some((p) => p.id === provider) && <option value={provider}>{provider} (unavailable)</option>}
                 {providerOpts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink3 rotate-90"><Icon name="chevR" size={13} /></span>

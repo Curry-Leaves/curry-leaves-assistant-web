@@ -62,6 +62,10 @@ type AudioState = {
   finalText: string;
   kind: 'live' | 'dictation';
   recordingId?: string;  // meeting streams carry this so the backend live engine can run
+  // Per-recording override of the app's live-copilot setting (the Capture toggle). Remembered
+  // so a socket reconnect re-sends it — otherwise the recording silently reverts to the app
+  // setting mid-meeting, which reads as the toggle spontaneously flipping.
+  liveEnabled?: boolean;
   // PCM captured before the server assigned our slot (audio.ready). Buffered, then flushed in
   // order the instant the slot arrives — otherwise the opening moment of speech is dropped (the
   // slot byte can't be stamped yet). Capped so a stuck handshake can't grow it without bound.
@@ -245,11 +249,16 @@ export function subscribeLiveContext(fn: (recordingId: string, cards: LiveCard[]
 
 /** Attach the in-meeting live engine to an already-open audio stream. Sent once the recording
  *  id is known (which can arrive AFTER the stream opens), so the engine engages regardless of
- *  ordering. Idempotent on the backend. */
-export function attachLive(streamId: string, recordingId: string): void {
+ *  ordering. Idempotent on the backend.
+ *
+ *  `enabled` overrides the app-level live-copilot setting for THIS recording only (the Capture
+ *  toggle); undefined leaves the recording following the setting. Re-sending attach with a new
+ *  value is how the toggle flips mid-recording — the backend updates the existing session in
+ *  place, so the copilot keeps the conversation history it has built up. */
+export function attachLive(streamId: string, recordingId: string, enabled?: boolean): void {
   const st = _audioStreams.get(streamId);
-  if (st) st.recordingId = recordingId;  // remembered so a reconnect re-attaches
-  _send({ type: 'live.attach', streamId, recordingId });
+  if (st) { st.recordingId = recordingId; st.liveEnabled = enabled; }  // remembered so a reconnect re-attaches
+  _send({ type: 'live.attach', streamId, recordingId, ...(enabled === undefined ? {} : { enabled }) });
 }
 
 /** Nudge the live engine with a high-signal cue (attendee added / note typed) for a stream. */
@@ -358,6 +367,11 @@ async function _connect(): Promise<void> {
     for (const [streamId, st] of _audioStreams) {
       st.slot = null;
       ws.send(JSON.stringify({ type: 'audio.start', streamId, kind: st.kind, recordingId: st.recordingId }));
+      // The server-side live session died with the socket, so re-assert the copilot override
+      // for this recording — audio.start alone would rebuild it following the app setting.
+      if (st.recordingId && st.liveEnabled !== undefined) {
+        ws.send(JSON.stringify({ type: 'live.attach', streamId, recordingId: st.recordingId, enabled: st.liveEnabled }));
+      }
     }
     _attempts = 0;
     _setStatus('connected');

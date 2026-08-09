@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   MDXEditor, type MDXEditorMethods,
   headingsPlugin, listsPlugin, quotePlugin, thematicBreakPlugin, markdownShortcutPlugin,
-  codeBlockPlugin, codeMirrorPlugin, tablePlugin, linkPlugin, linkDialogPlugin,
+  codeBlockPlugin, codeMirrorPlugin, tablePlugin, linkPlugin, linkDialogPlugin, imagePlugin,
   diffSourcePlugin, toolbarPlugin,
   BoldItalicUnderlineToggles, BlockTypeSelect, ListsToggle, CreateLink, InsertTable,
   InsertCodeBlock, InsertThematicBreak, Separator, UndoRedo,
@@ -43,21 +43,36 @@ import { waterfallCodeBlockDescriptor } from './blocks/WaterfallCodeBlockEditor'
 import { sankeyCodeBlockDescriptor } from './blocks/SankeyCodeBlockEditor';
 import { kanbanCodeBlockDescriptor } from './blocks/KanbanCodeBlockEditor';
 import { apiSpecCodeBlockDescriptor } from './blocks/ApiSpecCodeBlockEditor';
+import { excalidrawCodeBlockDescriptor } from './blocks/ExcalidrawCodeBlockEditor';
 import { InsertMoreButton } from './blocks/InsertMoreButton';
+import { tableCellBreakPlugin } from './tableCellBreakPlugin';
+import { extractTableSizes, injectTableSizes, type TableSizes } from './tableSizes';
+import { useTableResize } from './useTableResize';
+import {
+  describeElement, imageElement, nthElement, replaceElement, type NoteElementKind,
+} from './noteElements';
+import { useElementHover } from './useElementHover';
+import { ElementAiButton } from './ElementAiButton';
 
 // Each claims one fenced-code language and renders it as a live block.
 const RICH_BLOCK_DESCRIPTORS = [
   mermaidCodeBlockDescriptor, tabViewCodeBlockDescriptor, calendarCodeBlockDescriptor,
   chartCodeBlockDescriptor, diffChartCodeBlockDescriptor, timelineCodeBlockDescriptor,
   mindMapCodeBlockDescriptor, waterfallCodeBlockDescriptor, sankeyCodeBlockDescriptor,
-  kanbanCodeBlockDescriptor, apiSpecCodeBlockDescriptor,
+  kanbanCodeBlockDescriptor, apiSpecCodeBlockDescriptor, excalidrawCodeBlockDescriptor,
 ];
 import { useDictation } from '../../../hooks/useDictation';
 import { useAiEdit, type AiScope } from './useAiEdit';
+import { AiConversationPanel, type ConversationTurn, type TurnOutcome } from './AiConversationPanel';
 import { SelectionPill } from './SelectionPill';
 import { EditorContextMenu, type AiMenuRequest } from './EditorContextMenu';
 import { ReviewCard } from './ReviewCard';
 import { NoteLinkButton } from './NoteLinkButton';
+import { InsertImageButton } from './InsertImageButton';
+import { useImageInsert, normalizeImageBlocks } from './useImageInsert';
+import { htmlImagesToMarkdown, markdownImagesToHtml } from '../../../components/noteImages';
+import { ImageAlignToolbar } from './ImageAlignToolbar';
+import { api } from '../../../api/client';
 import '@mdxeditor/editor/style.css';
 import './mdxeditor-theme.css';
 
@@ -79,11 +94,15 @@ interface WholeEdit {
 }
 
 export function RichNoteEditor({
-  body, onChange, autoFocus,
+  body, onChange, autoFocus, aiPanelOpen = false, onAiPanelOpenChange,
 }: {
   body: string;
   onChange: (next: string) => void;
   autoFocus?: boolean;
+  /** The AI conversation rail. Controlled by the parent so its toggle can live in the
+   *  note header next to Properties, where the other rail toggles already are. */
+  aiPanelOpen?: boolean;
+  onAiPanelOpenChange?: (open: boolean) => void;
 }) {
   const editorRef = useRef<MDXEditorMethods>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -93,7 +112,28 @@ export function RichNoteEditor({
   // `<` opens a JSX tag and `{` an expression. An autolink like <https://x.com> — valid markdown —
   // otherwise fails to parse and the editor shows a red error instead of the note. Rewrite those
   // few constructs into MDX-safe equivalents; code blocks are left byte-for-byte alone.
-  const safeBody = useMemo(() => toMdxSafe(body), [body]);
+  // Normalize a note's images to the ONE form this editor can size correctly.
+  //
+  // MDXEditor only reads width/height from a real `<img>` tag (its MdastHtmlImageVisitor);
+  // the plain-markdown path creates the node with `width: "inherit"`. So a resized image must
+  // reach it as HTML or it reopens at full size, looking like the resize was lost. We first fold
+  // any existing tag to markdown (canonicalizing whatever form the note happens to be in, and
+  // capturing its size into the `#w=…&h=…` fragment), then expand ONLY the sized ones back to
+  // `<img>`. Plain images stay plain markdown.
+  //
+  // toMdxSafe runs last and deliberately leaves `<img …/>` alone — it self-closes void tags
+  // rather than escaping them, which is exactly the form MDX accepts.
+  //
+  // Table column/row sizes come out FIRST, and that order is load-bearing: they are stored in
+  // an HTML comment above the table, and toMdxSafe strips every comment (MDX cannot parse one).
+  // Extracting first captures the sizes instead of losing them — see tableSizes.ts.
+  const { safeBody, initialTableSizes } = useMemo(() => {
+    const { text, sizes } = extractTableSizes(body);
+    return {
+      safeBody: toMdxSafe(markdownImagesToHtml(htmlImagesToMarkdown(text))),
+      initialTableSizes: sizes,
+    };
+  }, [body]);
 
   // MDXEditor re-serializes the parsed AST on its first onChange after mount, which
   // can differ from `body` (list markers, spacing) even with no user edit. Adopt that
@@ -120,11 +160,97 @@ export function RichNoteEditor({
   const [whole, setWhole] = useState<WholeEdit | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
 
+  // ── the AI conversation (right rail) ─────────────────────────────────────────
+  // `turns` is what the user reads; `convoRef` is what the MODEL is sent. They differ on
+  // purpose: an assistant turn's real content is an entire rewritten note, and replaying
+  // those verbatim would put one full copy of the note in the prompt per turn. The model
+  // gets a one-line summary of what it proposed instead, which is enough for "make it
+  // shorter" to resolve while keeping the prompt from growing without bound.
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const convoRef = useRef<{ role: string; content: string }[]>([]);
+  // The turn awaiting a decision in the diff overlay, so applying/discarding can stamp the
+  // right receipt — and so closing the overlay leaves a way back to it.
+  const pendingTurnRef = useRef<string | null>(null);
+  // Bumped by Clear. A run that resolves after its generation is stale must not write to the
+  // thread: cancelling resolves the in-flight promise, and without this check the abandoned
+  // run would append its outcome to the conversation the user just emptied.
+  const convoGenRef = useRef(0);
+
+  // Where the diff overlay is anchored. It must be WIDER than the editor column — two
+  // columns of source don't fit in what's left once the rails are open (583px of 1500px) —
+  // but it must NOT cover the AI panel, because the whole point of the conversation is that
+  // you can keep talking while a proposal is on screen. So it spans from the editor's left
+  // edge to the panel's left edge, taking back the Properties rail but never the AI rail.
+  // Measured rather than styled, since either rail can open and close independently.
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [reviewRect, setReviewRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const measure = () => {
+      const row = el.getBoundingClientRect();
+      const panel = el.querySelector('aside[aria-label="AI conversation"]')?.getBoundingClientRect();
+      // Reach past our own row to the edge of the editing area (the Properties rail is
+      // NoteEditor's sibling, outside this row) — reviewing a diff is worth borrowing that
+      // width. Stop short only of the AI panel, so the composer stays usable.
+      const area = el.closest('[data-cl-edit-area]')?.getBoundingClientRect();
+      const right = panel ? panel.left : (area ? area.right : row.right);
+      setReviewRect({ top: row.top, left: row.left, width: Math.max(0, right - row.left), height: row.height });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    // The row's OFFSET can change without its size changing (something above it collapsing),
+    // which a ResizeObserver alone won't report.
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
+  }, [aiPanelOpen]);
+
+  const reviewBox: React.CSSProperties = reviewRect
+    ? { position: 'fixed', zIndex: 20, ...reviewRect }
+    : { position: 'absolute', inset: 0, zIndex: 20 };
+
+  const addTurn = useCallback((turn: Omit<ConversationTurn, 'id'>): string => {
+    const id = crypto.randomUUID();
+    setTurns((list) => [...list, { ...turn, id }]);
+    return id;
+  }, []);
+
+  const stampTurn = useCallback((id: string | null, patch: Partial<ConversationTurn>) => {
+    if (!id) return;
+    setTurns((list) => list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }, []);
+
+  // Close out whichever proposal was awaiting review. Called from apply/discard and from
+  // every path that abandons a run, so a turn can never be left stuck on "review".
+  const settlePending = useCallback((outcome: TurnOutcome) => {
+    stampTurn(pendingTurnRef.current, { outcome, pending: false });
+    pendingTurnRef.current = null;
+  }, [stampTurn]);
+
+  // Live table column/row sizes, by table index. A ref because a drag updates them on every
+  // pointermove and syncMarkdown must read the latest without re-creating its callback.
+  const tableSizesRef = useRef<Map<number, TableSizes>>(initialTableSizes);
+
   // ── change handling ──────────────────────────────────────────────────────────
   // Pull the editor's live markdown and propagate if it differs from what we last
   // saw. The `firstChangeRef` guard skips MDXEditor's post-mount normalization pass
   // (it re-serializes the AST once, which can differ harmlessly from `body`).
-  const syncMarkdown = useCallback((md: string) => {
+  const syncMarkdown = useCallback((raw: string) => {
+    // Lexical serializes images as INLINE nodes, so a pasted image welds itself onto the
+    // preceding text or the previous image (`![a](x)![b](y)` on one line). Break them apart
+    // before anything else sees the markdown — see normalizeImageBlocks for why that matters.
+    // Also drop the zero-width spaces the table-cell Shift+Enter handler parks after a
+    // `<br />` to hold the caret (see tableCellBreakPlugin) — they are a caret scaffold,
+    // never content, and must not reach the saved file.
+    // Table sizes go back in LAST, so the comment lands in the text that gets saved (and is
+    // part of the `latestRef` comparison below \u2014 a resize must read as a real change, and a
+    // note whose tables were never resized must stay byte-identical to plain markdown).
+    const md = injectTableSizes(
+      normalizeImageBlocks(raw).replace(/\u200B/g, ''),
+      tableSizesRef.current,
+    );
     if (firstChangeRef.current) {
       firstChangeRef.current = false;
       latestRef.current = md;
@@ -139,6 +265,41 @@ export function RichNoteEditor({
   }, [onChange]);
 
   const handleChange = syncMarkdown;
+
+  // The `.cl-mdx` root, as STATE rather than only a ref, so effects can key on it and re-run
+  // once it actually mounts. It also portals MDXEditor's popovers (link dialog, block-type
+  // menu) INTO the root instead of document.body — otherwise they escape our scoped styling
+  // and render with MDXEditor's default (oversized) icons and chrome.
+  const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null);
+  const setRoot = useCallback((el: HTMLDivElement | null) => {
+    rootRef.current = el;
+    setOverlayEl(el);
+  }, []);
+
+  // Which table / rich block / image the pointer is over — the target for the floating AI
+  // button. Frozen while its menu is open so moving into the menu doesn't retarget it.
+  const [elementMenuOpen, setElementMenuOpen] = useState(false);
+  const hoveredElement = useElementHover(overlayEl, elementMenuOpen);
+
+  // Drag-to-resize table columns/rows. Sizes are DOM-only (markdown has no slot for them), so
+  // the drag writes inline styles and then re-serializes by hand: the MutationObserver below
+  // watches childList/characterData and deliberately NOT attributes, so a style change raises
+  // no mutation of its own — which also means no resize/serialize feedback loop.
+  const handleTableSizes = useCallback((next: Map<number, TableSizes>) => {
+    tableSizesRef.current = next;
+    const md = editorRef.current?.getMarkdown();
+    if (md != null) syncMarkdown(md);
+  }, [syncMarkdown]);
+
+  const { setSizes: setTableSizes, reapply: reapplyTableSizes } =
+    useTableResize(overlayEl, handleTableSizes);
+
+  // Re-assert saved sizes whenever the document is (re)loaded: MDXEditor rebuilds the table
+  // DOM from the model, which drops our inline widths.
+  useEffect(() => {
+    tableSizesRef.current = initialTableSizes;
+    setTableSizes(initialTableSizes);
+  }, [initialTableSizes, setTableSizes]);
 
   // Some MDXEditor commands mutate the document WITHOUT firing onChange — notably the
   // link popover's "Remove link", and a few other toolbar actions. Their DOM change
@@ -166,11 +327,14 @@ export function RichNoteEditor({
       timer = setTimeout(() => {
         const md = editorRef.current?.getMarkdown();
         if (md != null) syncMarkdown(md);
+        // MDXEditor rebuilds a table's DOM from the model on any edit inside it (adding a row,
+        // typing in a cell), which discards the inline col widths — put them back.
+        reapplyTableSizes();
       }, 200);
     });
     obs.observe(el, { childList: true, subtree: true, characterData: true });
     return () => { if (timer) clearTimeout(timer); obs.disconnect(); };
-  }, [syncMarkdown]);
+  }, [syncMarkdown, reapplyTableSizes]);
 
   // If the note being edited changes underneath us (parent swaps `body` for a different note,
   // or a restore), reset the editor and the baseline guard.
@@ -196,6 +360,41 @@ export function RichNoteEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeBody]);
+
+  // ── images: paste, drop, toolbar ─────────────────────────────────────────────
+  // All three funnel through one hook so an image added any way lands identically. The upload
+  // is async, so the markdown is inserted on resolve — MDXEditor's insertMarkdown puts it at the
+  // current caret, which is still where the user pasted/dropped.
+  const insertMarkdown = useCallback((md: string) => {
+    editorRef.current?.insertMarkdown(md);
+    // insertMarkdown mutates Lexical without necessarily firing onChange (same gap the
+    // MutationObserver above covers), so sync explicitly — otherwise an image added as the
+    // only edit never marks the note dirty and the Save button stays disabled.
+    const next = editorRef.current?.getMarkdown();
+    if (next != null) syncMarkdown(next);
+  }, [syncMarkdown]);
+
+  const images = useImageInsert(insertMarkdown);
+  const [dragOver, setDragOver] = useState(false);
+
+  // The `plugins` array is memoized with [] deps on purpose — rebuilding it remounts MDXEditor
+  // and loses the caret — so the toolbar can't close over `images` directly (it would freeze at
+  // its first-render value and never show the busy state). Bounce through a ref that each render
+  // refreshes, and re-render the toolbar on `busy` via the state below.
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+
+  // Paste and drop are handled by imagePlugin's own Lexical listeners (which call our
+  // imageUploadHandler), so nothing is intercepted here — doing both would upload twice and
+  // insert the image twice. These handlers only drive the drop-target affordance.
+  const onDrop = useCallback(() => setDragOver(false), []);
+
+  // dragover must be cancelled for a drop to fire at all; only claim the event when the drag
+  // actually carries files, so dragging TEXT within the note still works normally.
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+    setDragOver(true);
+  }, []);
 
   // ── selection tracking → floating pill ───────────────────────────────────────
   const editorContains = (node: Node | null) =>
@@ -248,6 +447,59 @@ export function RichNoteEditor({
       return;
     }
     setScoped((s) => (s ? { ...s, candidate: res.candidate } : null));
+  }, [ai, safeBody]);
+
+  // ── element edits (table / rich block / image) ───────────────────────────────
+  // These cannot go through the selection route: a table's rendered selection doesn't match its
+  // markdown, and a rich block's content never enters the page selection at all. Instead we look
+  // the element up by ordinal, hand the model just that element's SOURCE, and splice the reply
+  // back over the same character range — so the rest of the note is untouched by construction.
+  // Review still happens in the normal diff overlay.
+  const runElement = useCallback(async (
+    kind: NoteElementKind, ordinal: number, instruction: string, src?: string,
+  ) => {
+    // Images resolve by src; everything else by ordinal. See imageElement for why.
+    const locate = (md: string) => (kind === 'image' && src
+      ? imageElement(md, src, ordinal)
+      : nthElement(md, kind, ordinal));
+    const current = editorRef.current?.getMarkdown() ?? safeBody;
+    const el = locate(current);
+    if (!el) { ai.setError('Could not find that element in the note — try again.'); return; }
+
+    setHistory((h) => [...h, { id: crypto.randomUUID(), role: 'user', content: instruction, timestamp: Date.now() }]);
+    const res = await ai.run({
+      scope: 'element', instruction, sourceText: el.source, noteContext: current,
+    });
+    if (!res) return;
+
+    // Re-locate before splicing: the note may have been edited while the model was streaming,
+    // which would make the offsets captured above stale.
+    const latest = editorRef.current?.getMarkdown() ?? current;
+    const target = locate(latest);
+    if (!target) { ai.setError('That element changed while the edit was running — try again.'); return; }
+
+    // Models habitually wrap a reply in a ``` fence even when told not to (useAiEdit strips this
+    // for the other scopes too). For a table or an image that fence would turn the element into
+    // a code block; for a fenced BLOCK the fence is the element, so it must be left alone.
+    let replacement = res.candidate.trim();
+    if (kind === 'block') {
+      // The reverse hazard: a block reply that came back as bare content would delete the fence
+      // and dissolve the block into prose. Re-wrap it in the element's own fence + language.
+      if (!/^(`{3,}|~{3,})/.test(replacement)) {
+        const lang = /^[ \t]*(?:`{3,}|~{3,})[ \t]*([A-Za-z0-9_-]*)/.exec(target.source)?.[1] ?? '';
+        replacement = `\`\`\`${lang}\n${replacement}\n\`\`\``;
+      }
+    } else {
+      const unwrapped = /^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```$/.exec(replacement);
+      if (unwrapped) replacement = unwrapped[1];
+    }
+
+    const after = replaceElement(latest, target, replacement);
+    setHistory((h) => [...h, { id: crypto.randomUUID(), role: 'assistant', content: res.candidate, candidateText: res.candidate, timestamp: Date.now() }]);
+    const parts = diffLines(latest, after);
+    const hunks = buildHunks(parts);
+    if (hunks.length === 0) { ai.setError('The model returned it unchanged.'); return; }
+    setWhole({ before: latest, after, parts, hunks });
   }, [ai, safeBody]);
 
   // Only `insert` reaches here now — selection edits go through the diff overlay.
@@ -346,8 +598,111 @@ export function RichNoteEditor({
     latestRef.current = merged;
     onChange(merged);
     setHistory((h) => h.map((e, i) => (i === h.length - 1 ? { ...e, outcome: 'applied' } : e)));
+    // Only the ACCEPTED hunks landed — say so, rather than implying the whole proposal did.
+    // The model is told the same thing, so a follow-up doesn't assume rejected edits are in.
+    const accepted = whole.hunks.filter((h) => h.state === 'accepted').length;
+    const total = whole.hunks.length;
+    const partial = accepted > 0 && accepted < total;
+    stampTurn(pendingTurnRef.current, {
+      outcome: accepted === 0 ? 'discarded' : 'applied',
+      pending: false,
+      candidate: undefined,
+      text: accepted === 0
+        ? `Proposed ${total} change${total === 1 ? '' : 's'} — none kept.`
+        : partial
+          ? `Kept ${accepted} of ${total} changes.`
+          : `Applied ${total} change${total === 1 ? '' : 's'}.`,
+    });
+    if (pendingTurnRef.current) {
+      convoRef.current = [...convoRef.current, {
+        role: 'user',
+        content: accepted === 0
+          ? 'I rejected all of those changes.'
+          : partial
+            ? `I kept ${accepted} of those ${total} changes and rejected the rest.`
+            : 'I applied those changes.',
+      }];
+    }
+    pendingTurnRef.current = null;
     setWhole(null);
-  }, [whole, onChange]);
+  }, [whole, onChange, stampTurn]);
+
+  // ── the conversation panel's own run ─────────────────────────────────────────
+  // Always whole-note scope: the panel is about the note as a whole, and the model gets the
+  // running conversation so a follow-up compounds instead of starting over.
+  const runConversation = useCallback(async (instruction: string) => {
+    const current = editorRef.current?.getMarkdown() ?? safeBody;
+    const gen = convoGenRef.current;
+    addTurn({ role: 'user', text: instruction, target: 'whole note' });
+    const priorHistory = convoRef.current.slice();
+    convoRef.current = [...priorHistory, { role: 'user', content: instruction }];
+
+    setHistory((h) => [...h, { id: crypto.randomUUID(), role: 'user', content: instruction, timestamp: Date.now() }]);
+    const res = await ai.run({
+      scope: 'whole', instruction, sourceText: current, noteContext: current,
+      history: priorHistory,
+    });
+    // Cleared while this was in flight — the thread it belonged to is gone.
+    if (gen !== convoGenRef.current) return;
+    if (!res) {
+      // ai.run already surfaced the reason (error or user cancel) — record the outcome so
+      // the thread doesn't just stop mid-sentence.
+      addTurn({ role: 'assistant', text: 'No changes were produced.', scope: 'whole', outcome: ai.error ? 'error' : 'cancelled' });
+      return;
+    }
+
+    const parts = diffLines(current, res.candidate);
+    const hunks = buildHunks(parts);
+    setHistory((h) => [...h, { id: crypto.randomUUID(), role: 'assistant', content: res.candidate, candidateText: res.candidate, timestamp: Date.now() }]);
+
+    if (hunks.length === 0) {
+      convoRef.current = [...convoRef.current, { role: 'assistant', content: 'I returned the note unchanged.' }];
+      addTurn({ role: 'assistant', text: 'Returned the note unchanged.', scope: 'whole', outcome: 'no-change' });
+      return;
+    }
+
+    convoRef.current = [...convoRef.current, {
+      role: 'assistant',
+      content: `I proposed ${hunks.length} change${hunks.length === 1 ? '' : 's'} to the note for that request.`,
+    }];
+    const turnId = addTurn({
+      role: 'assistant', scope: 'whole', changeCount: hunks.length, pending: true,
+      candidate: res.candidate,
+      text: `Proposed ${hunks.length} change${hunks.length === 1 ? '' : 's'}.`,
+    });
+    pendingTurnRef.current = turnId;
+    setWhole({ before: current, after: res.candidate, parts, hunks });
+  }, [ai, safeBody, addTurn]);
+
+  // Reopen a proposal the user closed without deciding. The candidate is re-diffed against
+  // the note as it is NOW, not as it was: the user may have typed in between, and showing a
+  // stale diff would offer to apply changes against text that no longer exists.
+  const reopenTurn = useCallback((turnId: string) => {
+    const turn = turns.find((x) => x.id === turnId);
+    if (!turn?.candidate) return;
+    const current = editorRef.current?.getMarkdown() ?? safeBody;
+    const parts = diffLines(current, turn.candidate);
+    const hunks = buildHunks(parts);
+    if (hunks.length === 0) {
+      stampTurn(turnId, { outcome: 'no-change', pending: false });
+      if (pendingTurnRef.current === turnId) pendingTurnRef.current = null;
+      return;
+    }
+    pendingTurnRef.current = turnId;
+    setWhole({ before: current, after: turn.candidate, parts, hunks });
+  }, [turns, safeBody, stampTurn]);
+
+  const clearConversation = useCallback(() => {
+    // Stop any run still streaming, and drop the proposal it was heading for. Without this
+    // the in-flight turn lands moments later and repopulates the thread the user just
+    // emptied — and its diff would review a conversation that no longer exists.
+    convoGenRef.current += 1;
+    if (ai.streaming) ai.cancel();
+    setWhole(null);
+    setTurns([]);
+    convoRef.current = [];
+    pendingTurnRef.current = null;
+  }, [ai]);
 
   // ── right-click menu ─────────────────────────────────────────────────────────
   const onContextMenu = useCallback((e: React.MouseEvent) => {
@@ -427,7 +782,36 @@ export function RichNoteEditor({
         css: 'CSS', html: 'HTML', sql: 'SQL', md: 'Markdown',
       },
     }),
+    // Without this, MDXEditor has no node for `![alt](path)` and refuses to parse the note
+    // ("Parsing of the following markdown structure failed: image"), dropping it into source
+    // mode. The two handlers keep images working under our storage + auth model:
+    //  • upload — paste/drop/picker inside Lexical routes here, storing the file in the bundle
+    //    and returning the RELATIVE path, so what lands in the markdown stays portable;
+    //  • preview — the editor is showing that relative path, which the browser would resolve
+    //    against the page origin, so map it to the backend asset URL (with the token, since an
+    //    <img> can't carry an Authorization header) purely for display.
+    imagePlugin({
+      imageUploadHandler: async (file: File) => {
+        const saved = await api.uploadKnowledgeAsset(file.name || 'image', await file.arrayBuffer());
+        return saved.path;
+      },
+      // Drop any `#w=…&h=…` fragment before resolving: it encodes the display size for the
+      // viewer (see htmlImagesToMarkdown), and is not part of the stored filename.
+      imagePreviewHandler: async (src: string) => {
+        const path = src.split('#')[0];
+        return /^(https?:|data:|blob:)/i.test(path)
+          ? path
+          : api.knowledgeAssetUrl(path.replace(/^\.?\//, ''));
+      },
+      disableImageSettingsButton: true,
+      // Our own floating toolbar: MDXEditor's default offers only delete once the settings
+      // dialog is disabled, and alignment belongs right there on the selected image.
+      EditImageToolbar: ImageAlignToolbar,
+    }),
     tablePlugin(),
+    // Must come AFTER tablePlugin: both bind Enter in a cell at CRITICAL priority, and
+    // the later registration is consulted first (see tableCellBreakPlugin).
+    tableCellBreakPlugin(),
     linkPlugin(),
     linkDialogPlugin(),
     diffSourcePlugin({ viewMode: 'rich-text' }),
@@ -446,6 +830,12 @@ export function RichNoteEditor({
           <NoteLinkButton
             onInsert={(md) => editorRef.current?.insertMarkdown(md)}
             selectedText={() => window.getSelection()?.toString() ?? ''}
+          />
+          {/* Reads `busy` from the shared store rather than a prop: this toolbar is built once
+              (see the plugins memo) and would otherwise never re-render to show progress. */}
+          <InsertImageButton
+            onFiles={(files) => void imagesRef.current.uploadFiles(files)}
+            onUrl={(url, alt) => imagesRef.current.insertUrl(url, alt)}
           />
           <InsertTable />
           <InsertCodeBlock />
@@ -478,20 +868,16 @@ export function RichNoteEditor({
     }),
   ], []);
 
-  const wholeStreaming = ai.streaming && !scoped && !whole;
+  // The bottom "Improving note…" strip is for runs started from the TOOLBAR. A run driven by
+  // the conversation panel streams in the panel instead, so it must not also claim the strip.
+  const wholeStreaming = ai.streaming && !scoped && !whole && !aiPanelOpen;
 
-  // Portal MDXEditor's popovers (link dialog, block-type menu) INTO the `.cl-mdx`
-  // root instead of document.body — otherwise they escape our scoped styling and
-  // render with MDXEditor's default (oversized) icons and chrome.
-  const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null);
-  const setRoot = useCallback((el: HTMLDivElement | null) => {
-    rootRef.current = el;
-    setOverlayEl(el);
-  }, []);
-
-  return (
-    <div ref={setRoot} className="cl-mdx" style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+  const editorSurface = (
+    <div ref={setRoot} className="cl-mdx" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
       onContextMenu={onContextMenu}
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false); }}
     >
       <MDXEditor
         ref={editorRef}
@@ -502,6 +888,36 @@ export function RichNoteEditor({
         overlayContainer={overlayEl}
         contentEditableClassName="cl-mdx-content"
       />
+
+      {/* Drop affordance — only while a file drag is actually over the editor. */}
+      {dragOver && (
+        <div style={{
+          position: 'absolute', inset: 8, zIndex: 54, borderRadius: 10, pointerEvents: 'none',
+          border: `1.5px dashed ${t.accent}`,
+          background: `color-mix(in oklch, ${t.accent} 7%, transparent)`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'Inter, sans-serif', fontSize: 13, fontWeight: 600, color: t.accentInk,
+        }}>
+          Drop image to add it to this note
+        </div>
+      )}
+
+      {/* Image upload error — a rejected paste is otherwise silent, and the user would
+          reasonably think the app just lost their screenshot. */}
+      {images.error && (
+        <div style={{
+          position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 56,
+          padding: '8px 14px', borderRadius: 8, background: 'oklch(0.55 0.18 25)', color: 'white',
+          fontFamily: 'Inter, sans-serif', fontSize: 12, display: 'flex', gap: 10, alignItems: 'center',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          {images.error}
+          <button type="button" title="Dismiss" aria-label="Dismiss error" onClick={images.clearError}
+            style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer' }}>
+            <Icon name="x" size={12} color="white" />
+          </button>
+        </div>
+      )}
 
       {/* AI error toast */}
       {ai.error && (
@@ -616,6 +1032,28 @@ export function RichNoteEditor({
         />
       )}
 
+      {/* AI handle for a hovered table / rich block / image. Hidden while a text selection is
+          active so it can't compete with the selection pill for the same click. */}
+      {hoveredElement && !pill && !scoped && !whole && !menu && !ai.streaming && (
+        <ElementAiButton
+          left={hoveredElement.left}
+          top={hoveredElement.top}
+          kind={hoveredElement.kind}
+          label={(() => {
+            const md = editorRef.current?.getMarkdown() ?? safeBody;
+            const el = hoveredElement.kind === 'image' && hoveredElement.src
+              ? imageElement(md, hoveredElement.src, hoveredElement.ordinal)
+              : nthElement(md, hoveredElement.kind, hoveredElement.ordinal);
+            return el ? describeElement(el) : 'this element';
+          })()}
+          onOpenChange={setElementMenuOpen}
+          onInstruction={(instr) => {
+            setElementMenuOpen(false);
+            runElement(hoveredElement.kind, hoveredElement.ordinal, instr, hoveredElement.src);
+          }}
+        />
+      )}
+
       {/* right-click menu */}
       {menu && (
         <EditorContextMenu
@@ -641,9 +1079,13 @@ export function RichNoteEditor({
         />
       )}
 
-      {/* whole-note review */}
+      {/* whole-note review.
+          Anchored to the whole EDITING AREA (editor + rails), not to this column: the diff
+          is two side-by-side columns of source, and with the AI and Properties rails open
+          the column left here is far too narrow to read one (583px in a 1500px window).
+          Measured rather than styled, because the rails open and close independently. */}
       {whole && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 20 }}>
+        <div style={reviewBox}>
           <DiffOverlay
             hunks={whole.hunks}
             parts={whole.parts}
@@ -656,12 +1098,56 @@ export function RichNoteEditor({
             onAcceptAll={() => setWhole((w) => (w ? { ...w, hunks: w.hunks.map((h) => ({ ...h, state: 'accepted' as const })) } : w))}
             onRejectAll={() => setWhole((w) => (w ? { ...w, hunks: w.hunks.map((h) => ({ ...h, state: 'rejected' as const })) } : w))}
             onApply={applyWhole}
-            onDiscard={() => setWhole(null)}
-            onRefine={(instr) => { setWhole(null); runWhole(instr); }}
+            onDiscard={() => {
+              // Discarding from the overlay is a decision, so the receipt settles here.
+              // (Closing the panel or navigating away is NOT — that leaves it reopenable.)
+              if (pendingTurnRef.current) {
+                convoRef.current = [...convoRef.current, { role: 'user', content: 'I discarded those changes.' }];
+              }
+              settlePending('discarded');
+              setWhole(null);
+            }}
+            onRefine={(instr) => {
+              setWhole(null);
+              // A refine from the diff continues the SAME conversation when the panel is
+              // driving it, so the thread stays the single record of what was asked.
+              if (pendingTurnRef.current) {
+                stampTurn(pendingTurnRef.current, { outcome: 'discarded', pending: false, candidate: undefined });
+                pendingTurnRef.current = null;
+                convoRef.current = [...convoRef.current, { role: 'user', content: 'Not quite — let me refine that.' }];
+                runConversation(instr);
+                return;
+              }
+              runWhole(instr);
+            }}
             onCancelStream={ai.cancel}
           />
         </div>
       )}
+    </div>
+  );
+
+  // The editor and its AI rail sit side by side; the rail is a sibling, not an overlay, so
+  // the writing surface simply narrows instead of being covered while you converse.
+  if (!aiPanelOpen) {
+    return <div ref={shellRef} style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex' }}>{editorSurface}</div>;
+  }
+  return (
+    <div ref={shellRef} style={{ flex: 1, minHeight: 0, display: 'flex', minWidth: 0 }}>
+      {editorSurface}
+      <AiConversationPanel
+        turns={turns}
+        streaming={ai.streaming && !scoped}
+        streamPreview={ai.preview}
+        hasAgent={ai.hasAgent}
+        error={ai.error}
+        onSend={runConversation}
+        onCancel={ai.cancel}
+        onReopen={reopenTurn}
+        onClear={clearConversation}
+        onClose={() => onAiPanelOpenChange?.(false)}
+        onDismissError={ai.clearError}
+      />
     </div>
   );
 }

@@ -18,6 +18,11 @@ export const STARTERS: Record<string, string> = {
   waterfall: 'name, start, duration, type\nGET /page, 0, 1250, navigation\n  DNS, 0, 12, dns\n  Connect, 12, 45, connect\n  Request, 57, 180, request\n  Transfer, 237, 620, transfer\nGET /api/data, 300, 280, api\n  Auth, 305, 18, auth\n  DB query, 323, 220, db\n  Serialize, 543, 40, process\nRender, 1100, 150, render',
   sankey:    'Source A -> Target X: 40\nSource A -> Target Y: 25\nSource B -> Target X: 20\nSource B -> Target Z: 35\nTarget X -> Output 1: 45\nTarget X -> Output 2: 15\nTarget Y -> Output 2: 25\nTarget Z -> Output 3: 35',
   kanban:    '=== To Do\n- Design database schema\n- Write API tests\n\n=== In Progress\n- Build authentication flow\n\n=== Done\n- Project kickoff\n',
+  // An empty scene: you insert a drawing to draw in it, so anything prefilled would just be
+  // something to delete first.
+  // No height directive: the block falls back to its own DEFAULT_H, so the default lives in ONE
+  // place (ExcalidrawCodeBlockEditor) instead of being pinned here too.
+  excalidraw: '{\n  "type": "excalidraw",\n  "version": 2,\n  "source": "curry-leaves",\n  "elements": [],\n  "appState": {}\n}',
   api:       'POST /v1/users  "Create a new user"\ndomain: api.example.com\nenv: production  https://api.example.com\nenv: staging     https://staging.api.example.com\nauth: Bearer\nscopes: users:read users:write\n\n# Query\nnotify   boolean   optional   Send welcome email (default true)\n\n# Headers\nX-Trace-Id   string   optional   For request tracing\n\n# Scenarios\n\n## Happy path\n> request schema\nname   string   required   User\'s display name\nemail  string   required   Primary email address\nrole   string   optional   admin or user (default: user)\n\n> request\n{ "name": "Alice", "email": "alice@example.com" }\n\n> response 201 schema\nid         string   required   Unique user UUID\nname       string   required   Display name\nemail      string   required   Primary email\ncreatedAt  string   required   ISO 8601 timestamp\n\n> response 201\n{ "id": "u_123", "name": "Alice", "email": "alice@example.com", "createdAt": "2026-05-13T00:00:00Z" }\n\n## Validation error\n> request schema\nemail  string   required   Must be a valid email address\n\n> request\n{ "email": "not-an-email" }\n\n> response 400 schema\nerror  string   required   Machine-readable error code\nfield  string   optional   Which field failed validation\n\n> response 400\n{ "error": "invalid_email", "field": "email" }\n',
 };
 
@@ -182,6 +187,18 @@ const ITEMS = [
           <span style={{ width: 5, height: 3, borderRadius: 1, background: 'oklch(0.65 0.15 65)' }} />
           <span style={{ width: 14, height: 3, borderRadius: 1, background: hair, opacity: 0.5 }} />
         </span>
+      </span>
+    ),
+  },
+  {
+    language: 'excalidraw',
+    label: 'Drawing',
+    desc: 'Freehand sketch, boxes and arrows',
+    icon: (accent: string, hair: string) => (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 2.5, flexShrink: 0 }}>
+        <span style={{ width: 9, height: 9, borderRadius: 1.5, border: `1.5px solid ${accent}`, transform: 'rotate(-6deg)' }} />
+        <span style={{ width: 8, height: 1.5, background: hair, borderRadius: 1 }} />
+        <span style={{ width: 9, height: 9, borderRadius: '50%', border: `1.5px solid ${hair}` }} />
       </span>
     ),
   },
