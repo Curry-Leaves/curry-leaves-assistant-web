@@ -1,5 +1,5 @@
 /** Recordings: capture lifecycle, audio, attachments, and outputs. */
-import type { Recording, RecordingAttachment, RecordingOutput } from '../types';
+import type { Recording, RecordingAttachment, RecordingOutput, RecordingTag } from '../types';
 import { authHeader, withToken } from '../auth';
 import { base, j } from './http';
 
@@ -11,6 +11,8 @@ export const recordingsApi = {
   createRecording: (name?: string, templateId?: string, language?: string) =>
     j<Recording>('/recordings', { method: 'POST', body: JSON.stringify({ name, templateId, language }) }),
   suggestAttendees: () => j<{ names: string[] }>('/recordings/attendees/suggest'),
+  // Tags already in use, most-used first — feeds the tag picker and the rail's group order.
+  listRecordingTags: () => j<{ tags: RecordingTag[] }>('/recordings/tags'),
   appendChunk: async (id: string, buf: ArrayBuffer) =>
     fetch((await base()) + `/recordings/${id}/chunk`, {
       method: 'POST',
@@ -26,7 +28,7 @@ export const recordingsApi = {
   // Save an interrupted (crash-orphaned) draft → finalize + transcribe. Discard is deleteRecording.
   recoverRecording: (id: string) => j<Recording>(`/recordings/${id}/recover`, { method: 'POST' }),
   deleteRecording: (id: string) => j<{ ok: boolean }>(`/recordings/${id}`, { method: 'DELETE' }),
-  updateRecording: (id: string, patch: Partial<Pick<Recording, 'name' | 'notes' | 'links' | 'tags' | 'saveToKnowledge' | 'language' | 'attendees' | 'templateId' | 'templateIds'>>) =>
+  updateRecording: (id: string, patch: Partial<Pick<Recording, 'name' | 'notes' | 'links' | 'tags' | 'saveToKnowledge' | 'language' | 'attendees' | 'organizer' | 'templateId' | 'templateIds'>>) =>
     j<Recording>(`/recordings/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   attachToRecording: async (id: string, file: File): Promise<RecordingAttachment> => {
     const res = await fetch((await base()) + `/recordings/${id}/attach?filename=${encodeURIComponent(file.name)}`, {

@@ -10,6 +10,7 @@ export interface Recording {
   links?: RecordingLink[];
   attachments?: RecordingAttachment[];
   attendees?: string[];        // people in the meeting; drives attribution + transcription bias
+  organizer?: string | null;   // whose meeting it is — always one of `attendees`, or null
   saveToKnowledge?: boolean;
   templateId?: string | null;   // primary meeting template (first of templateIds; owns the summary)
   templateIds?: string[];       // all meeting templates driving the copilot's outputs
@@ -31,6 +32,10 @@ export interface RecordingOutput {
   jobId?: string | null;
   content: string;
 }
+
+/** A tag in use across recordings, with how many carry it. Derived on read by the backend —
+ *  there is no tag registry, so a tag stops existing when the last recording drops it. */
+export interface RecordingTag { tag: string; count: number }
 
 export interface RecordingLink { url: string; title?: string }
 export interface RecordingAttachment { name: string; mdPath?: string; size?: number; chars?: number }

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Rename a recording from its title.** The Recordings detail header is now click-to-edit —
+  Enter or blur saves, Escape reverts. Previously the only name field was buried in the
+  "Notes & files" tab. A cleared name isn't saved, since the backend would substitute the
+  placeholder that re-arms the auto-titler.
+- **Tag recordings, during or after capture.** A Tags row in the recording context panel, which
+  renders in both the live Capture view and the Recordings detail — so the same control covers
+  mid-meeting and after-the-fact tagging. Suggestions come from tags already used elsewhere, so
+  the vocabulary converges instead of forking into near-duplicates.
+- **Live transcript reads as text or as a timeline.** A Text/Timeline toggle in the transcript
+  header. Text is the existing flowing passage; Timeline stacks each transcribed chunk as its
+  own row with the elapsed time it landed at, oldest first — for reading back what was said
+  when rather than following the flow. The choice persists. Both views keep the same
+  scroll-follows-newest behaviour, including releasing when you scroll up to read back.
+- **Notes moved into the centre column while recording.** The running notes now sit directly
+  beneath the pin composer that writes into them, instead of in the right-hand context panel —
+  so what you type into and where it lands are next to each other. Pinning a note appends its
+  timestamped line to the body live. The right panel drops its own Notes box during a recording
+  (the Recordings detail keeps it), because both edited the same string and only one of them
+  could stay in sync.
+- **Mark the organizer of a meeting.** Each attendee chip carries a person icon that marks
+  whose meeting it is; the organizer's chip is filled in. Clicking the current organizer unsets
+  it. Removing that person as an attendee clears the role rather than leaving a stale name.
+- **`@` mentions an attendee in notes.** Typing `@` in either the pin composer or the notes body
+  offers this recording's attendees — arrow keys or Tab/Enter to pick, Escape to dismiss. It
+  inserts the plain name, so notes still read as sentences to you and to the summarizer. Add
+  someone as an attendee to make them mentionable.
+- **Group the recordings list by tag.** A "Group by tag" toggle turns the list into collapsible
+  per-tag groups, ordered most-used first with Untagged last. A recording files under its first
+  tag, so it appears exactly once; the lead chip is highlighted in the editor and the others can
+  be clicked to promote. Groups holding the selection — and all groups while searching — stay
+  open. Sorting inside each group toggles newest/oldest, and both preferences persist.
+
 ## [1.3.2] - 2026-08-09
 
 ### Fixed

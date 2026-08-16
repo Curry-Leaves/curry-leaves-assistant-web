@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/chrome/Icon';
 import { useRecorder } from '../hooks/useRecorder';
-import { useLiveTranscript } from '../hooks/useLiveTranscript';
+import { useLiveTranscript, type TranscriptSegment } from '../hooks/useLiveTranscript';
 import { CaughtPanels } from '../components/CaughtCard';
 import { RecordingContextPanel } from '../components/RecordingContextPanel';
 import { LiveCards } from '../components/LiveCards';
+import { MentionInput } from '../components/MentionInput';
 import { Markdown } from '../components/Markdown';
 import { FallingLeaves } from '../components/FallingLeaves';
 import { api } from '../api/client';
@@ -49,8 +50,22 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
   const [draftRec, setDraftRec] = useState<Recording | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem('micDeviceId') || '');
-  const { transcript: live, streamId: liveStreamId } = useLiveTranscript(
-    rec.isRecording, rec.isPaused, deviceId || undefined, rec.recordingId || undefined);
+  // Read by the transcript stream to stamp each settled chunk. A ref so a new elapsed second
+  // doesn't re-run the hook's effect and tear the audio stream down.
+  const elapsedRef = useRef(0);
+  elapsedRef.current = rec.recordingTime;
+  const { transcript: live, segments: liveSegments, streamId: liveStreamId } = useLiveTranscript(
+    rec.isRecording, rec.isPaused, deviceId || undefined, rec.recordingId || undefined, elapsedRef);
+
+  // Flowing paragraph vs. timestamped timeline. Persisted: which way you read a transcript is
+  // a lasting preference, not a per-meeting one.
+  const [transcriptView, setTranscriptView] = useState<'text' | 'timeline'>(() => {
+    try { return localStorage.getItem('curry-leaves.capture.transcriptView') === 'timeline' ? 'timeline' : 'text'; }
+    catch { return 'text'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('curry-leaves.capture.transcriptView', transcriptView); } catch { /* ignore */ }
+  }, [transcriptView]);
 
   // Keep the live transcript pinned to the newest speech as it streams in — but let go the
   // moment the user scrolls up to read something back, so we never yank them away mid-read.
@@ -71,7 +86,9 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
   useEffect(() => {
     const el = liveScrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [live]);
+    // Also on view switch: the two layouts have different heights, so the newest line would
+    // otherwise land off-screen after a toggle.
+  }, [live, transcriptView]);
 
   // ── Live Copilot ───────────────────────────────────────────────────────────
   // The app-level default (Settings → Live Copilot; off unless the user opted in) and this
@@ -413,10 +430,23 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
           <div className="flex-1 min-w-0 min-h-0 rounded-[14px] border border-border bg-card shadow-soft flex flex-col">
             <div className="flex items-center justify-between px-6 pt-4 pb-2.5 flex-none border-b border-border-soft">
               <span className="text-[11px] uppercase tracking-wider text-ink3 font-600">Live transcript</span>
-              <span className="flex items-center gap-1.5 text-[11.5px] text-ink3">
-                <span className={`w-1.5 h-1.5 rounded-full ${rec.isPaused ? 'bg-ink3' : 'an-pulse bg-ok'}`} />
-                {rec.isPaused ? 'Paused' : 'Listening'}
-              </span>
+              <div className="flex items-center gap-2.5">
+                <div className="flex gap-1 bg-sidebar border border-sidebar-border rounded-[6px] p-0.5">
+                  {([['text', 'Text'], ['timeline', 'Timeline']] as const).map(([id, label]) => (
+                    <button key={id} type="button" onClick={() => setTranscriptView(id)}
+                      title={id === 'text' ? 'One flowing passage' : 'Timestamped, newest at the bottom'}
+                      aria-pressed={transcriptView === id}
+                      className={`px-2 py-0.5 rounded-[4px] text-[10.5px] ${
+                        transcriptView === id ? 'bg-card text-ink shadow-soft' : 'text-sidebar-ink3'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <span className="flex items-center gap-1.5 text-[11.5px] text-ink3">
+                  <span className={`w-1.5 h-1.5 rounded-full ${rec.isPaused ? 'bg-ink3' : 'an-pulse bg-ok'}`} />
+                  {rec.isPaused ? 'Paused' : 'Listening'}
+                </span>
+              </div>
             </div>
             <div ref={liveScrollRef} className="flex-1 overflow-y-auto px-6 py-5">
               {modelReady === false ? (
@@ -427,6 +457,8 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
                 </div>
               ) : !live ? (
                 <div className="text-[13px] text-ink3 italic">Listening for speech…</div>
+              ) : transcriptView === 'timeline' ? (
+                <LiveTimeline segments={liveSegments} transcript={live} />
               ) : (
                 <p className="text-[15px] text-ink leading-[1.85] whitespace-pre-wrap max-w-[68ch] mx-auto">
                   {live}
@@ -434,11 +466,20 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
                 </p>
               )}
             </div>
-            {/* live note composer — pins a timestamped note into the recording */}
-            <NoteComposer recId={rec.recordingId} elapsed={rec.recordingTime} streamId={liveStreamId} />
+            {/* live note composer + the notes body it pins into — both edit the recording's
+                one `notes` string, which is why the right panel hides its own Notes field */}
+            <NoteComposer
+              recId={rec.recordingId}
+              elapsed={rec.recordingTime}
+              streamId={liveStreamId}
+              notes={draftRec?.notes ?? ''}
+              attendees={draftRec?.attendees ?? []}
+              onNotesChange={setDraftRec}
+            />
           </div>
 
-          {/* right: context panel (name, attendees, notes, links, docs) — unchanged */}
+          {/* right: context panel (name, template, attendees, tags, links, docs). Notes live in
+              the centre column during a recording — see NoteComposer. */}
           {draftRec && (
             <div className="w-[300px] flex-none overflow-y-auto rounded-[14px] border border-border bg-card shadow-soft p-4">
               <RecordingContextPanel
@@ -447,6 +488,7 @@ export function CaptureScreen({ active, onSaved, onNavigate, onOpenSettings }: {
                 templates={templates}
                 onTemplatesChanged={loadTemplates}
                 hideKnowledgeToggle
+                hideNotes
               />
             </div>
           )}
@@ -571,37 +613,123 @@ function PipeStep({ title, desc }: { title: string; desc: string }) {
 /** A timestamped note typed during the meeting — pinned into the recording's notes with an
  *  elapsed-time marker, so it reads back alongside the transcript moment it was written. Also
  *  nudges the live engine, since a typed note is the strongest signal of what matters. */
-function NoteComposer({ recId, elapsed, streamId }: { recId: string | null; elapsed: number; streamId: string | null }) {
+/** The live transcript as timestamped entries, oldest at the top — for reading back what was
+ *  said when, rather than following the flow. Each entry is one settled chunk from the stream,
+ *  stamped with the recorder's elapsed time (the live stream carries no timings of its own).
+ *
+ *  Any text past the last settled chunk is still in flight, so it renders as an unstamped tail
+ *  with the cursor — otherwise the newest speech would vanish until the chunk closed. */
+function LiveTimeline({ segments, transcript }: { segments: TranscriptSegment[]; transcript: string }) {
+  const settled = segments.map((s) => s.text).join(' ');
+  const pending = transcript.startsWith(settled) ? transcript.slice(settled.length).trim() : '';
+
+  return (
+    <div className="max-w-[68ch] mx-auto flex flex-col gap-2.5">
+      {segments.map((s, i) => (
+        <div key={`${s.at}-${i}`} className="flex gap-3">
+          <span className="flex-none w-[42px] pt-[3px] text-[11px] font-mono tabular-nums text-faint">{fmt(s.at)}</span>
+          <span className="flex-1 text-[14px] text-ink leading-[1.7]">{s.text}</span>
+        </div>
+      ))}
+      {pending && (
+        <div className="flex gap-3">
+          <span className="flex-none w-[42px] pt-[3px] text-[11px] font-mono text-faint">···</span>
+          <span className="flex-1 text-[14px] text-ink2 leading-[1.7]">
+            {pending}
+            <span className="an-blink inline-block w-[2px] h-[15px] bg-accent align-middle ml-0.5" />
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The pin composer plus the running notes body, both writing the recording's one `notes`
+ *  string. They sit together in the centre column so the thing you type into and the thing it
+ *  lands in are adjacent — and so notes aren't editable here AND in the right panel at once.
+ *
+ *  Typing `@` in either field offers this recording's attendees and inserts the plain name:
+ *  notes are read verbatim by the summarizer, so a name reads better than a markup token.
+ *  Attendees only — add someone to the meeting first and they become mentionable. */
+function NoteComposer({ recId, elapsed, streamId, notes, attendees, onNotesChange }: {
+  recId: string | null;
+  elapsed: number;
+  streamId: string | null;
+  notes: string;
+  attendees: string[];
+  onNotesChange: (rec: Recording) => void;
+}) {
   const [text, setText] = useState('');
   const [saved, setSaved] = useState(false);
+  const [body, setBody] = useState(notes);
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const submit = async () => {
+  // Follow the recording's notes except while this textarea has focus — a pinned line or a
+  // save round-trip must not yank the cursor out from under someone mid-sentence.
+  useEffect(() => { if (!editing) setBody(notes); }, [notes, editing]);
+
+  const saveBody = (next: string) => {
+    if (!recId) return;
+    api.updateRecording(recId, { notes: next }).then(onNotesChange).catch(() => {});
+  };
+  const onBodyChange = (next: string) => {
+    setBody(next);
+    if (debRef.current) clearTimeout(debRef.current);
+    debRef.current = setTimeout(() => saveBody(next), 600);
+  };
+
+  const pin = () => {
     const note = text.trim();
     if (!note || !recId) return;
-    try {
-      const cur = await api.getRecording(recId);
-      const stamp = fmt(elapsed);
-      const prev = (cur?.notes || '').trim();
-      const line = `[${stamp}] ${note}`;
-      await api.updateRecording(recId, { notes: prev ? `${prev}\n${line}` : line });
-      if (streamId) sendLiveSignal(streamId, note);
-      setText('');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1200);
-    } catch { /* non-blocking — a dropped note shouldn't interrupt recording */ }
+    // Append to the on-screen body rather than re-reading the recording: the textarea may hold
+    // edits that haven't finished saving, and re-fetching here would drop them.
+    const prev = body.trim();
+    const line = `[${fmt(elapsed)}] ${note}`;
+    const next = prev ? `${prev}\n${line}` : line;
+    setBody(next);
+    saveBody(next);
+    if (streamId) sendLiveSignal(streamId, note);
+    setText('');
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1200);
   };
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2.5 border-t border-border-soft flex-none">
-      <Icon name="edit" size={13} color="var(--color-ink3)" />
-      <input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-        placeholder="Type a note — it pins to this moment…"
-        className="flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink3"
-      />
-      <span className="text-[11px] text-ink3 tabular-nums">{saved ? 'Pinned ✓' : fmt(elapsed)}</span>
+    <div className="flex-none border-t border-border-soft flex flex-col">
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <Icon name="edit" size={13} color="var(--color-ink3)" />
+        <MentionInput
+          as="input"
+          inputRef={inputRef}
+          value={text}
+          onChange={setText}
+          onEnter={pin}
+          people={attendees}
+          placeholder="Type a note — it pins to this moment…"
+          className="flex-1 bg-transparent text-[12.5px] text-ink outline-none placeholder:text-ink3"
+        />
+        <span className="text-[11px] text-ink3 tabular-nums flex-none">{saved ? 'Pinned ✓' : fmt(elapsed)}</span>
+      </div>
+      <div className="px-4 pb-3">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[10.5px] uppercase tracking-wider text-ink3 font-600">Notes</span>
+          <span className="text-[10.5px] text-faint">— pinned notes land here; @ mentions an attendee</span>
+        </div>
+        <MentionInput
+          as="textarea"
+          textareaRef={bodyRef}
+          value={body}
+          onChange={onBodyChange}
+          onFocus={() => setEditing(true)}
+          onBlur={() => { setEditing(false); if (body !== notes) saveBody(body); }}
+          people={attendees}
+          placeholder="Notes for the copilot & agents — decisions, context, anything off-mic…"
+          className="w-full h-[132px] rounded-[8px] border border-border bg-bg text-ink text-[12.5px] leading-relaxed px-2.5 py-2 outline-none focus:border-accent resize-y"
+        />
+      </div>
     </div>
   );
 }
